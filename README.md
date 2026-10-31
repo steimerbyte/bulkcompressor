@@ -52,6 +52,34 @@ zusätzliche Datei daneben.
 Original — dann steht dort `SKIP`. Ebenso, wenn die Einstellungen für
 die Datei nichts ändern (z. B. „1080p" bei einem 720p-Video).
 
+## Aufbau des Bildschirms
+
+Der Bildschirm ist in der Reihenfolge der Arbeit sortiert: **Ordner und
+Auswahl** oben, dann **Video**, **Bilder**, **Ausgabe** und die
+**Optionen**, darunter Speicherstand und die Zusammenfassung der
+Einstellungen.
+
+Der **Startknopf sitzt fest am unteren Rand** und wird von der Seite nicht
+weggescrollt — bei einem Ordner mit hunderten Dateien ist er sonst erst
+nach langem Wischen zu erreichen. Das Protokoll liegt zwischen Inhalt und
+Knopf; aufgeklappt schiebt es den Inhalt hoch, statt ihn zu verdecken.
+
+Drei Regeln, die im Layout stecken:
+
+- **Chip-Reihen brechen um, statt abzuschneiden.** Auf einem 360 dp
+  breiten Gerät passten „1440p", „1080p", „720p" und „480p" nicht in eine
+  Zeile; „720p" lag halb außerhalb und war nicht antippbar
+  (`WrappingRowLayout`). Kein waagerechtes Wischen mehr, keine unsichtbare
+  Option.
+- **Abschnitte, die nicht wirken, sagen das einmal.** Ein wirksamer
+  Abschnitt bekommt kein Label („AKTIV" ist der Normalfall); angezeigt
+  wird nur die Ausnahme („INAKTIV", „NICHTS AUSGEWÄHLT"), und der
+  Abschnitt tritt zurück. Vorher standen bis zu fünf „AKTIV" gleichzeitig
+  auf dem Bildschirm.
+- **Ein gesperrter Startknopf sieht gesperrt aus.** Ohne Auswahl trägt er
+  eine schwache Kante statt der weißen Fläche — ein weißer Knopf, der
+  nicht reagiert, ist eine Falle.
+
 ## Presets
 
 **Video — Bitrate:** 100 %, 75 %, 50 %, 35 %, 25 % der Quellbitrate.

@@ -63,7 +63,12 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     private lateinit var adapter: MediaAdapter
     private lateinit var textFolder: TextView
+    private lateinit var textSub: TextView
     private lateinit var textSummary: TextView
+    private lateinit var textSelection: TextView
+    private lateinit var rowSelection: View
+    private lateinit var rowSelectionActions: View
+    private lateinit var dividerSelection: View
     private lateinit var listMedia: RecyclerView
     private lateinit var textEstimate: TextView
     private lateinit var textHint: TextView
@@ -179,6 +184,14 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             SoundKit.play(SoundKit.Click.THUNK)
             onStartButtonClicked()
         }
+        findViewById<View>(R.id.button_select_all).setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
+            selectAll()
+        }
+        findViewById<View>(R.id.button_select_none).setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
+            selectNone()
+        }
         buttonAccess.setOnClickListener {
             SoundKit.play(SoundKit.Click.TICK)
             requestAllFilesAccess()
@@ -235,7 +248,12 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     private fun bindViews() {
         textFolder = findViewById(R.id.text_folder)
+        textSub = findViewById(R.id.text_sub)
         textSummary = findViewById(R.id.text_summary)
+        textSelection = findViewById(R.id.text_selection)
+        rowSelection = findViewById(R.id.row_selection)
+        rowSelectionActions = findViewById(R.id.row_selection_actions)
+        dividerSelection = findViewById(R.id.divider_selection)
         listMedia = findViewById(R.id.list_media)
         textEstimate = findViewById(R.id.text_estimate)
         textHint = findViewById(R.id.text_hint)
@@ -492,26 +510,31 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         textActiveConfig.text = configSummary(hasVideos, hasImages, selectsNothing)
     }
 
+    /**
+     * Statuslabels sind Ausnahmen, keine Dekoration: ein Abschnitt, der
+     * wirkt, braucht kein "AKTIV" - das ist der Normalfall. Angezeigt wird
+     * nur, was den Normalfall verlaesst. Vorher standen bis zu fuenf
+     * "● AKTIV" gleichzeitig auf dem Bildschirm und verdraengten genau das
+     * eine Wort, auf das es ankommt.
+     */
     private fun setStatus(view: TextView, active: Boolean) {
-        view.setText(if (active) R.string.status_active else R.string.status_inactive)
-        view.setTextColor(if (active) 0xFFFFFFFF.toInt() else 0xFF6B6B6B.toInt())
+        if (active) {
+            view.visibility = View.GONE
+            return
+        }
+        view.visibility = View.VISIBLE
+        view.setText(R.string.status_inactive)
+        view.setTextColor(0xFF6B6B6B.toInt())
     }
 
     private fun setSectionStatus(view: TextView, hasItems: Boolean, unknown: Boolean) {
-        when {
-            unknown -> {
-                view.setText(R.string.status_active)
-                view.setTextColor(0xFF6B6B6B.toInt())
-            }
-            hasItems -> {
-                view.setText(R.string.status_active)
-                view.setTextColor(0xFFFFFFFF.toInt())
-            }
-            else -> {
-                view.setText(R.string.status_no_selection)
-                view.setTextColor(0xFF6B6B6B.toInt())
-            }
+        if (hasItems || unknown) {
+            view.visibility = View.GONE
+            return
         }
+        view.visibility = View.VISIBLE
+        view.setText(R.string.status_no_selection)
+        view.setTextColor(0xFF6B6B6B.toInt())
     }
 
     private fun configSummary(hasVideos: Boolean, hasImages: Boolean, unknown: Boolean): String {
@@ -552,10 +575,10 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         return buildString {
             appendLine(videoLine)
             appendLine(imageLine)
+            appendLine(getString(R.string.config_output, output))
             append(
                 getString(
-                    R.string.config_output,
-                    output,
+                    R.string.config_options,
                     getString(if (settings.keepTimestamps) R.string.value_on else R.string.value_off),
                     getString(if (settings.keepExif) R.string.value_on else R.string.value_off)
                 )
@@ -608,6 +631,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             return
         }
         treeUri = uri
+        textSub.visibility = View.GONE
         startScan(uri)
     }
 
@@ -640,6 +664,10 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         selectedIds.clear()
         result.items.forEach { selectedIds.add(it.docId) }
 
+        // Die Zeile haengt nicht mehr daran, dass startScan() sie vorher
+        // sichtbar gemacht hat: eine wiederhergestellte Auswahl nach einem
+        // Prozessende kommt ohne startScan hier an.
+        textSummary.visibility = View.VISIBLE
         if (result.items.isEmpty()) {
             textSummary.text = getString(R.string.scan_empty)
             listMedia.visibility = View.GONE
@@ -653,6 +681,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             listMedia.visibility = View.VISIBLE
         }
         adapter.submit(result.items, selectedIds)
+        renderSelection()
         renderActiveState()
         renderStartButton()
         updateEstimate()
@@ -667,9 +696,51 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             true
         }
         adapter.setSelected(item.docId, nowSelected)
+        afterSelectionChanged()
+    }
+
+    /**
+     * Alles auswaehlen. Bei einem Ordner mit hunderten Dateien ist der
+     * Unterschied zwischen "alle" und "keine" der einzige Auswahlschritt,
+     * den man in einem Tipp erledigen will.
+     */
+    private fun selectAll() {
+        val items = scanResult?.items ?: return
+        items.forEach { selectedIds.add(it.docId) }
+        adapter.submit(items, selectedIds)
+        afterSelectionChanged()
+    }
+
+    private fun selectNone() {
+        selectedIds.clear()
+        adapter.submit(scanResult?.items.orEmpty(), selectedIds)
+        afterSelectionChanged()
+    }
+
+    private fun afterSelectionChanged() {
+        renderSelection()
         renderActiveState()
         renderStartButton()
         updateEstimate()
+    }
+
+    /**
+     * Zeigt die Zahl der ausgewaehlten Dateien und blendet die Griffe ein.
+     * Ohne Ordner gibt es nichts zu zaehlen - dann bleiben beide weg.
+     */
+    private fun renderSelection() {
+        val items = scanResult?.items.orEmpty()
+        val visible = items.isNotEmpty()
+        val how = if (visible) View.VISIBLE else View.GONE
+        dividerSelection.visibility = how
+        rowSelection.visibility = how
+        rowSelectionActions.visibility = how
+        if (visible) {
+            textSelection.text = getString(R.string.selection_count, selectedIds.size, items.size)
+        }
+        // Die Einleitung erklaert die App; bei geladenem Ordner ist die
+        // Flaeche besser in der Dateiliste aufgehoben.
+        textSub.visibility = if (treeUri == null) View.VISIBLE else View.GONE
     }
 
     private fun displayPath(uri: Uri): String = runCatching {
@@ -684,41 +755,28 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     // Schätzung / Zusammenfassung
     // ------------------------------------------------------------------
 
+    /**
+     * Nur die Mengen: was ausgewaehlt ist und wie gross es ist. Wie es
+     * danach aussieht, steht darunter im Konfigurationsblock - vorher
+     * nannte diese Zeile Aufloesung und Qualitaet ein zweites Mal.
+     */
     private fun updateEstimate() {
         val result = scanResult
-        if (result == null) {
-            textEstimate.setText(R.string.estimate_unknown)
+        val chosen = result?.items?.filter { selectedIds.contains(it.docId) }
+        if (chosen.isNullOrEmpty()) {
+            textEstimate.visibility = View.GONE
             return
         }
-        val chosen = result.items.filter { selectedIds.contains(it.docId) }
-        if (chosen.isEmpty()) {
-            textEstimate.text = "-"
-            return
-        }
+        textEstimate.visibility = View.VISIBLE
         val videos = chosen.filter { it.kind == MediaKind.VIDEO }
         val images = chosen.filter { it.kind == MediaKind.IMAGE }
         textEstimate.text = buildString {
             append("${videos.size} Videos · ")
             append(CompressionJob.formatSize(videos.sumOf { it.sizeBytes }))
-            append("   ")
+            append("    ")
             append("${images.size} Bilder · ")
             append(CompressionJob.formatSize(images.sumOf { it.sizeBytes }))
-            append("\n")
-            append(videoSummary())
-            append(" · Bilder ")
-            append(if (settings.imageShortEdge > 0) "${settings.imageShortEdge}p" else "unveraendert")
-            append(" Q${settings.imageQuality}")
         }
-    }
-
-    private fun videoSummary(): String = when (settings.videoMode) {
-        VideoMode.BITRATE -> "Bitrate ${settings.bitratePercent} %"
-        VideoMode.SCALE -> if (settings.videoShortEdge > 0) {
-            "Aufloesung max. ${settings.videoShortEdge}p"
-        } else {
-            "Aufloesung unveraendert"
-        }
-        VideoMode.BOTH -> "${settings.bitratePercent} % · max. ${settings.videoShortEdge}p"
     }
 
     // ------------------------------------------------------------------
@@ -851,15 +909,22 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
                 buttonStart.setText(R.string.button_starting)
                 buttonStart.isEnabled = false
                 buttonStart.setTextColor(0xFF6B6B6B.toInt())
-                buttonStart.setBackgroundResource(R.drawable.button_background_outline)
+                buttonStart.setBackgroundResource(R.drawable.button_background_disabled)
             }
             else -> {
                 cancelRequested = false
                 val ready = treeUri != null && selectedIds.isNotEmpty()
                 buttonStart.setText(if (ready) R.string.button_start else R.string.button_no_selection)
                 buttonStart.isEnabled = ready
-                buttonStart.setTextColor(0xFF000000.toInt())
-                buttonStart.setBackgroundResource(R.drawable.button_background)
+                if (ready) {
+                    buttonStart.setTextColor(0xFF000000.toInt())
+                    buttonStart.setBackgroundResource(R.drawable.button_background)
+                } else {
+                    // Weiss gefuellt und nicht bedienbar sieht aus wie der
+                    // wichtigste Knopf der App, der nicht reagiert.
+                    buttonStart.setTextColor(0xFF6B6B6B.toInt())
+                    buttonStart.setBackgroundResource(R.drawable.button_background_disabled)
+                }
             }
         }
     }
@@ -901,6 +966,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     /** Nur fuer Tests: Ordner und Scanergebnis ohne echten ContentProvider. */
     internal fun applyScanForTest(tree: Uri, result: ScanResult) {
         treeUri = tree
+        textFolder.text = displayPath(tree)
         applyScan(result)
     }
 

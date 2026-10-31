@@ -33,6 +33,13 @@
     <string name="label_quality">QUALITÄT</string>
     <string name="label_format">FORMAT</string>
     <string name="label_output">AUSGABE</string>
+    <string name="label_options">OPTIONEN</string>
+    <string name="label_status">STAND</string>
+
+    <string name="label_selection">AUSWAHL</string>
+    <string name="selection_count">%1$d von %2$d</string>
+    <string name="selection_all">ALLE</string>
+    <string name="selection_none">KEINE</string>
 
     <string name="mode_bitrate">BITRATE</string>
     <string name="mode_scale">AUFLÖSUNG</string>
@@ -74,23 +81,22 @@
     <string name="progress_preparing">Vorbereitung …</string>
 
     <!-- Statusanzeigen: welche Einstellung wirkt gerade -->
-    <string name="status_active">● AKTIV</string>
     <string name="status_inactive">— INAKTIV</string>
     <string name="status_no_selection">— NICHTS AUSGEWÄHLT</string>
 
     <string name="label_active_config">AKTIVE KONFIGURATION</string>
-    <string name="config_video_bitrate">VIDEO    Bitrate %1$d %% · Codec %2$s</string>
-    <string name="config_video_scale">VIDEO    max. %1$s · Codec %2$s</string>
-    <string name="config_video_both">VIDEO    %1$d %% Bitrate · max. %2$s · Codec %3$s</string>
-    <string name="config_video_off">VIDEO    keine Videos in der Auswahl</string>
-    <string name="config_images">BILDER   max. %1$s · Qualität Q%2$d · %3$s</string>
-    <string name="config_images_off">BILDER   keine Bilder in der Auswahl</string>
-    <string name="config_output">AUSGABE  %1$s · Zeitstempel %2$s · EXIF %3$s</string>
+    <string name="config_video_bitrate">VIDEO\u0020\u0020\u0020\u0020Bitrate %1$d %% · Codec %2$s</string>
+    <string name="config_video_scale">VIDEO\u0020\u0020\u0020\u0020max. %1$s · Codec %2$s</string>
+    <string name="config_video_both">VIDEO\u0020\u0020\u0020\u0020%1$d %% Bitrate · max. %2$s · Codec %3$s</string>
+    <string name="config_video_off">VIDEO\u0020\u0020\u0020\u0020keine Videos in der Auswahl</string>
+    <string name="config_images">BILDER\u0020\u0020\u0020max. %1$s · Q%2$d · %3$s</string>
+    <string name="config_images_off">BILDER\u0020\u0020\u0020keine Bilder in der Auswahl</string>
+    <string name="config_output">AUSGABE\u0020\u0020%1$s</string>
+    <string name="config_options">OPTIONEN\u0020Zeitstempel %1$s · EXIF %2$s</string>
     <string name="value_unchanged">ORIGINAL</string>
     <string name="value_on">AN</string>
     <string name="value_off">AUS</string>
     <string name="footer">● OFFLINE · KEIN NETZWERKZUGRIFF</string>
-    <string name="estimate_unknown">Erwartung erscheint nach dem Einlesen</string>
 
     <string name="error_no_folder">Bitte zuerst einen Ordner wählen</string>
     <string name="error_no_selection">Keine Dateien ausgewählt</string>

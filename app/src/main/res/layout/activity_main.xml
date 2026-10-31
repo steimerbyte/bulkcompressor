@@ -1,19 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Wurzel ist ein FrameLayout, damit das Terminal-Panel ueber dem Inhalt
-    am unteren Rand liegen kann, ohne den Scrollbereich zu verschieben.
-    Der Inhalt bekommt unten 88dp Luft, damit die letzte Zeile und der
-    Startknopf (jetzt das letzte Bedienelement) nicht hinter dem
-    zugeklappten Terminal verschwinden.
+    Aufbau von oben nach unten = Arbeitsablauf:
+
+    1. Scrollbereich: Ordner und Dateiauswahl, dann was mit ihnen
+       geschehen soll (Video, Bilder, Ausgabe, Optionen), dann der Stand
+       (Speicher) und zuletzt die Zusammenfassung zum Nachlesen.
+    2. Terminal: zugeklappt eine 40dp-Leiste. Es liegt im Fluss und
+       ueberlagert nichts - es war vorher ein Overlay, und der Startknopf
+       verschwand darunter, sobald man es aufzog.
+    3. Aktionsleiste: Fortschritt und START/STOPP, immer am unteren Rand.
+       Vorher stand der Startknopf am Ende einer sehr langen Seite, und
+       der Fortschritt stand noch darunter - waehrend eines Laufs sah man
+       beides nur, wenn man ganz nach unten scrollte.
+
+    Der Scrollbereich bekommt den ganzen Rest (layout_weight=1), damit die
+    unteren beiden Bereiche ihre Hoehe behalten, egal wie lang die Seite ist.
 -->
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/nothing_black">
+    android:background="@color/nothing_black"
+    android:orientation="vertical">
 
     <ScrollView
+        android:id="@+id/scroll_main"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:background="@color/nothing_black"
         android:fillViewport="true"
         android:scrollbars="none">
@@ -22,159 +35,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="24dp"
-            android:paddingBottom="88dp">
+            android:paddingStart="24dp"
+            android:paddingTop="20dp"
+            android:paddingEnd="24dp"
+            android:paddingBottom="24dp">
 
-            <!-- Statistiktafel: Speicher jetzt, freigegebener Platz zuletzt.
-                 Steht vor allem anderen, weil sie waehrend eines Laufs die
-                 einzige Anzeige ist, die sich ohne Scrollen veraendert. -->
-
-            <LinearLayout
-                android:id="@+id/stats_board"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/input_background"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:fontFamily="monospace"
-                        android:letterSpacing="0.2"
-                        android:text="@string/stats_title"
-                        android:textColor="@color/nothing_white"
-                        android:textSize="10sp" />
-
-                    <TextView
-                        android:id="@+id/text_stats_memory_state"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:fontFamily="monospace"
-                        android:letterSpacing="0.16"
-                        android:textColor="@color/nothing_white"
-                        android:textSize="9sp" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:baselineAligned="true"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:id="@+id/text_stats_heap"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:fontFamily="monospace"
-                        android:letterSpacing="0.02"
-                        android:text="—"
-                        android:textColor="@color/nothing_white"
-                        android:textSize="26sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/text_stats_heap_total"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:fontFamily="monospace"
-                        android:letterSpacing="0.04"
-                        android:text="/ —"
-                        android:textColor="@color/nothing_dim"
-                        android:textSize="12sp" />
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:fontFamily="monospace"
-                        android:gravity="end"
-                        android:text="@string/stats_heap_label"
-                        android:textColor="@color/nothing_dim"
-                        android:textSize="9sp" />
-                </LinearLayout>
-
-                <com.steimerbyte.bulkcompressor.ui.SegmentBar
-                    android:id="@+id/bar_stats_heap"
-                    android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_marginTop="10dp" />
-
-                <TextView
-                    android:id="@+id/text_stats_device"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:fontFamily="monospace"
-                    android:letterSpacing="0.04"
-                    android:text="@string/stats_device_unknown"
-                    android:textColor="@color/nothing_grey"
-                    android:textSize="10sp" />
-
-                <!-- Erscheint erst, wenn ein Lauf wirklich Platz freigemacht hat. -->
-
-                <LinearLayout
-                    android:id="@+id/group_stats_saved"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:visibility="gone">
-
-                    <View
-                        android:layout_width="match_parent"
-                        android:layout_height="1dp"
-                        android:layout_marginTop="14dp"
-                        android:background="@color/nothing_outline" />
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
-                        android:orientation="horizontal">
-
-                        <TextView
-                            android:id="@+id/text_stats_saved"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:fontFamily="monospace"
-                            android:letterSpacing="0.02"
-                            android:text="0 MB"
-                            android:textColor="@color/nothing_white"
-                            android:textSize="22sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:fontFamily="monospace"
-                            android:letterSpacing="0.2"
-                            android:text="@string/stats_freed_label"
-                            android:textColor="@color/nothing_dim"
-                            android:textSize="9sp" />
-                    </LinearLayout>
-
-                    <TextView
-                        android:id="@+id/text_stats_saved_detail"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
-                        android:fontFamily="monospace"
-                        android:letterSpacing="0.04"
-                        android:textColor="@color/nothing_grey"
-                        android:textSize="10sp" />
-                </LinearLayout>
-            </LinearLayout>
-
-            <!-- Kopf -->
+            <!-- Kopf. Der Untertitel erklaert beim ersten Oeffnen, was die
+                 App tut; sobald ein Ordner geladen ist, kostet er nur
+                 Platz, der der Dateiliste fehlt. -->
 
             <TextView
                 android:layout_width="wrap_content"
@@ -188,89 +56,161 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
+                android:layout_marginTop="12dp"
                 android:fontFamily="sans-serif-medium"
                 android:letterSpacing="0.01"
                 android:lineSpacingExtra="2dp"
                 android:text="@string/main_headline"
                 android:textColor="@color/nothing_white"
-                android:textSize="26sp" />
+                android:textSize="24sp" />
 
             <TextView
+                android:id="@+id/text_sub"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="8dp"
                 android:fontFamily="sans-serif"
                 android:lineSpacingExtra="3dp"
                 android:text="@string/main_sub"
                 android:textColor="@color/nothing_grey"
-                android:textSize="14sp" />
+                android:textSize="13sp" />
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="24dp"
-                android:background="@color/nothing_outline" />
+            <!-- ============================ 1. QUELLE ============================ -->
 
-            <!-- Ordner -->
-
-            <TextView
-                style="@style/SectionLabel"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="24dp"
-                android:text="@string/label_folder" />
-
-            <TextView
-                android:id="@+id/text_folder"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:fontFamily="monospace"
-                android:text="@string/folder_none"
-                android:textColor="@color/nothing_white"
-                android:textSize="12sp" />
+                android:layout_marginTop="20dp"
+                android:background="@drawable/input_background"
+                android:orientation="vertical"
+                android:padding="16dp">
 
-            <Button
-                android:id="@+id/button_pick"
-                android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:layout_marginTop="14dp"
-                android:background="@drawable/button_background_outline"
-                android:fontFamily="monospace"
-                android:letterSpacing="0.08"
-                android:text="@string/button_pick"
-                android:textAllCaps="false"
-                android:textColor="@color/nothing_white"
-                android:textSize="14sp" />
+                <TextView
+                    style="@style/SectionLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/label_folder" />
 
-            <TextView
-                android:id="@+id/text_summary"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:fontFamily="monospace"
-                android:textColor="@color/nothing_grey"
-                android:textSize="12sp"
-                android:visibility="gone" />
+                <TextView
+                    android:id="@+id/text_folder"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:fontFamily="monospace"
+                    android:text="@string/folder_none"
+                    android:textColor="@color/nothing_white"
+                    android:textSize="12sp" />
 
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/list_media"
-                android:layout_width="match_parent"
-                android:layout_height="240dp"
-                android:layout_marginTop="8dp"
-                android:clipToPadding="false"
-                android:nestedScrollingEnabled="true"
-                android:visibility="gone" />
+                <Button
+                    android:id="@+id/button_pick"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/button_background_outline"
+                    android:fontFamily="monospace"
+                    android:letterSpacing="0.08"
+                    android:text="@string/button_pick"
+                    android:textAllCaps="false"
+                    android:textColor="@color/nothing_white"
+                    android:textSize="14sp" />
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="24dp"
-                android:background="@color/nothing_outline" />
+                <TextView
+                    android:id="@+id/text_summary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/nothing_grey"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
 
-            <!-- Video: der Status rechts neben der Ueberschrift zeigt,
-                 ob dieser Abschnitt mit der aktuellen Auswahl wirkt. -->
+                <View
+                    android:id="@+id/divider_selection"
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="14dp"
+                    android:background="@color/nothing_outline"
+                    android:visibility="gone" />
+
+                <!-- Auswahl: Zahl und zwei Griffe. Ohne sie kostet ein
+                     Ordner mit 653 Dateien 653 Tipper, um ihn abzuwaehlen. -->
+
+                <LinearLayout
+                    android:id="@+id/row_selection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <TextView
+                        style="@style/SectionLabel"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/label_selection" />
+
+                    <TextView
+                        android:id="@+id/text_selection"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:textColor="@color/nothing_white"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/row_selection_actions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/button_select_all"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/button_background_outline"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:fontFamily="monospace"
+                        android:gravity="center"
+                        android:letterSpacing="0.08"
+                        android:text="@string/selection_all"
+                        android:textColor="@color/nothing_white"
+                        android:textSize="11sp" />
+
+                    <TextView
+                        android:id="@+id/button_select_none"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/button_background_outline"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:fontFamily="monospace"
+                        android:gravity="center"
+                        android:letterSpacing="0.08"
+                        android:text="@string/selection_none"
+                        android:textColor="@color/nothing_grey"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/list_media"
+                    android:layout_width="match_parent"
+                    android:layout_height="240dp"
+                    android:layout_marginTop="10dp"
+                    android:clipToPadding="false"
+                    android:nestedScrollingEnabled="true"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <!-- ============================ 2. VIDEO ============================ -->
 
             <LinearLayout
                 android:id="@+id/group_video"
@@ -278,10 +218,16 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="24dp"
+                    android:background="@color/nothing_outline" />
+
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="24dp"
+                    android:layout_marginTop="20dp"
                     android:orientation="horizontal">
 
                     <TextView
@@ -296,30 +242,18 @@
                         style="@style/StatusLabel"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="@string/status_active" />
+                        android:visibility="gone" />
                 </LinearLayout>
 
-                <TextView
-                    style="@style/SectionLabel"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
-                    android:text="@string/label_mode" />
+                <!-- Mode-Chips: das ist die erste Entscheidung, deshalb
+                     ohne eigene Ueberschrift direkt unter VIDEO. -->
 
-                <HorizontalScrollView
+                <com.steimerbyte.bulkcompressor.ui.WrappingRowLayout
+                    android:id="@+id/chip_row_mode"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:scrollbars="none">
-
-                    <LinearLayout
-                        android:id="@+id/chip_row_mode"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal" />
-                </HorizontalScrollView>
-
-                <!-- Bitrate: nur im Modus Bitrate/Kombiniert wirksam -->
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal" />
 
                 <LinearLayout
                     android:id="@+id/group_bitrate"
@@ -330,7 +264,7 @@
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="18dp"
+                        android:layout_marginTop="16dp"
                         android:orientation="horizontal">
 
                         <TextView
@@ -367,8 +301,6 @@
                         android:progress="55" />
                 </LinearLayout>
 
-                <!-- Auflösung: nur im Modus Auflösung/Kombiniert wirksam -->
-
                 <LinearLayout
                     android:id="@+id/group_video_resolution"
                     android:layout_width="match_parent"
@@ -378,7 +310,7 @@
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
+                        android:layout_marginTop="12dp"
                         android:orientation="horizontal">
 
                         <TextView
@@ -397,48 +329,30 @@
                             android:text="@string/status_inactive" />
                     </LinearLayout>
 
-                    <HorizontalScrollView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:scrollbars="none">
-
-                        <LinearLayout
-                            android:id="@+id/chip_row_resolution"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal" />
-                    </HorizontalScrollView>
+                <com.steimerbyte.bulkcompressor.ui.WrappingRowLayout
+                    android:id="@+id/chip_row_resolution"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal" />
                 </LinearLayout>
 
                 <TextView
                     style="@style/SectionLabel"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
+                    android:layout_marginTop="12dp"
                     android:text="@string/label_codec" />
 
-                <HorizontalScrollView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:scrollbars="none">
-
-                    <LinearLayout
-                        android:id="@+id/chip_row_codec"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal" />
-                </HorizontalScrollView>
+            <com.steimerbyte.bulkcompressor.ui.WrappingRowLayout
+                android:id="@+id/chip_row_codec"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal" />
             </LinearLayout>
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:layout_marginTop="24dp"
-                android:background="@color/nothing_outline" />
-
-            <!-- Bilder -->
+            <!-- ============================ 3. BILDER ============================ -->
 
             <LinearLayout
                 android:id="@+id/group_images"
@@ -446,10 +360,16 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="24dp"
+                    android:background="@color/nothing_outline" />
+
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="24dp"
+                    android:layout_marginTop="20dp"
                     android:orientation="horizontal">
 
                     <TextView
@@ -464,13 +384,13 @@
                         style="@style/StatusLabel"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="@string/status_active" />
+                        android:visibility="gone" />
                 </LinearLayout>
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
+                    android:layout_marginTop="12dp"
                     android:orientation="horizontal">
 
                     <TextView
@@ -502,42 +422,32 @@
                     style="@style/SectionLabel"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
+                    android:layout_marginTop="12dp"
                     android:text="@string/label_resolution" />
 
-                <HorizontalScrollView
+                <com.steimerbyte.bulkcompressor.ui.WrappingRowLayout
+                    android:id="@+id/chip_row_image_resolution"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:scrollbars="none">
-
-                    <LinearLayout
-                        android:id="@+id/chip_row_image_resolution"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal" />
-                </HorizontalScrollView>
+                    android:orientation="horizontal" />
 
                 <TextView
                     style="@style/SectionLabel"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="14dp"
+                    android:layout_marginTop="12dp"
                     android:text="@string/label_format" />
 
-                <HorizontalScrollView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:scrollbars="none">
-
-                    <LinearLayout
-                        android:id="@+id/chip_row_image_format"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal" />
-                </HorizontalScrollView>
+            <com.steimerbyte.bulkcompressor.ui.WrappingRowLayout
+                android:id="@+id/chip_row_image_format"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal" />
             </LinearLayout>
+
+            <!-- ============================ 4. AUSGABE ============================ -->
 
             <View
                 android:layout_width="match_parent"
@@ -545,111 +455,153 @@
                 android:layout_marginTop="24dp"
                 android:background="@color/nothing_outline" />
 
-            <!-- Ausgabe -->
+            <TextView
+                style="@style/SectionLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/label_output" />
+
+            <com.steimerbyte.bulkcompressor.ui.WrappingRowLayout
+                android:id="@+id/chip_row_output"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal" />
+
+            <TextView
+                android:id="@+id/text_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:fontFamily="sans-serif"
+                android:lineSpacingExtra="2dp"
+                android:text="@string/output_hint_overwrite"
+                android:textColor="@color/nothing_dim"
+                android:textSize="12sp" />
+
+            <!-- ============================ 5. OPTIONEN ============================ -->
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="24dp"
+                android:background="@color/nothing_outline" />
 
             <TextView
                 style="@style/SectionLabel"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="24dp"
-                android:text="@string/label_output" />
+                android:layout_marginTop="20dp"
+                android:text="@string/label_options" />
 
-            <HorizontalScrollView
+            <!-- Drei Schalter in einem Block: sie sind gleichrangig und
+                 brauchen keine eigene Ueberschrift. -->
+
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:scrollbars="none">
+                android:background="@drawable/input_background"
+                android:orientation="vertical">
 
                 <LinearLayout
-                    android:id="@+id/chip_row_output"
-                    android:layout_width="wrap_content"
+                    android:id="@+id/row_timestamps"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal" />
-            </HorizontalScrollView>
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:orientation="horizontal"
+                    android:padding="14dp">
 
-            <LinearLayout
-                android:id="@+id/row_timestamps"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:background="@drawable/input_background"
-                android:orientation="horizontal"
-                android:padding="14dp">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="sans-serif"
+                        android:text="@string/toggle_timestamps"
+                        android:textColor="@color/nothing_white"
+                        android:textSize="13sp" />
 
-                <TextView
-                    android:layout_width="0dp"
+                    <TextView
+                        android:id="@+id/mark_timestamps"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:text="■"
+                        android:textColor="@color/nothing_white"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/nothing_outline" />
+
+                <LinearLayout
+                    android:id="@+id/row_exif"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:fontFamily="sans-serif"
-                    android:text="@string/toggle_timestamps"
-                    android:textColor="@color/nothing_white"
-                    android:textSize="13sp" />
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:orientation="horizontal"
+                    android:padding="14dp">
 
-                <TextView
-                    android:id="@+id/mark_timestamps"
-                    android:layout_width="wrap_content"
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="sans-serif"
+                        android:text="@string/toggle_exif"
+                        android:textColor="@color/nothing_white"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/mark_exif"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:text="■"
+                        android:textColor="@color/nothing_white"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/nothing_outline" />
+
+                <LinearLayout
+                    android:id="@+id/row_sound"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
-                    android:text="■"
-                    android:textColor="@color/nothing_white"
-                    android:textSize="14sp" />
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:orientation="horizontal"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="sans-serif"
+                        android:text="@string/toggle_sound"
+                        android:textColor="@color/nothing_white"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/mark_sound"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:text="■"
+                        android:textColor="@color/nothing_white"
+                        android:textSize="14sp" />
+                </LinearLayout>
             </LinearLayout>
 
-            <LinearLayout
-                android:id="@+id/row_exif"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:background="@drawable/input_background"
-                android:orientation="horizontal"
-                android:padding="14dp">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:fontFamily="sans-serif"
-                    android:text="@string/toggle_exif"
-                    android:textColor="@color/nothing_white"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:id="@+id/mark_exif"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
-                    android:text="■"
-                    android:textColor="@color/nothing_white"
-                    android:textSize="14sp" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/row_sound"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:background="@drawable/input_background"
-                android:orientation="horizontal"
-                android:padding="14dp">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:fontFamily="sans-serif"
-                    android:text="@string/toggle_sound"
-                    android:textColor="@color/nothing_white"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:id="@+id/mark_sound"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
-                    android:text="■"
-                    android:textColor="@color/nothing_white"
-                    android:textSize="14sp" />
-            </LinearLayout>
+            <!-- Der Hinweis auf "Zugriff auf alle Dateien" gehoert direkt
+                 unter den Schalter, der ihn ausloest. -->
 
             <TextView
                 android:id="@+id/text_access_hint"
@@ -666,8 +618,8 @@
             <Button
                 android:id="@+id/button_access"
                 android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:layout_marginTop="10dp"
+                android:layout_height="48dp"
+                android:layout_marginTop="8dp"
                 android:background="@drawable/button_background_outline"
                 android:fontFamily="monospace"
                 android:letterSpacing="0.06"
@@ -677,120 +629,207 @@
                 android:textSize="13sp"
                 android:visibility="gone" />
 
-            <TextView
-                android:id="@+id/text_hint"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:fontFamily="sans-serif"
-                android:lineSpacingExtra="2dp"
-                android:text="@string/output_hint_overwrite"
-                android:textColor="@color/nothing_dim"
-                android:textSize="12sp" />
+            <!-- ============================ 6. STAND ============================ -->
 
-            <!--
-                Aktive Konfiguration: eine Stelle, an der alle wirksamen
-                Einstellungen zusammenstehen. Das ist die Antwort auf
-                "welche Aktion ist jetzt aktiv?".
-            -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="24dp"
+                android:background="@color/nothing_outline" />
 
             <TextView
                 style="@style/SectionLabel"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="18dp"
-                android:text="@string/label_active_config" />
+                android:layout_marginTop="20dp"
+                android:text="@string/label_status" />
 
-            <TextView
-                android:id="@+id/text_active_config"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:background="@drawable/input_background"
-                android:fontFamily="monospace"
-                android:lineSpacingExtra="3dp"
-                android:padding="12dp"
-                android:textColor="@color/nothing_white"
-                android:textSize="11sp" />
-
-            <TextView
-                android:id="@+id/text_estimate"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:fontFamily="monospace"
-                android:text="@string/estimate_unknown"
-                android:textColor="@color/nothing_grey"
-                android:textSize="12sp" />
-
-            <!-- Fortschritt -->
+            <!-- Kompakt: zwei Zeilen Zahlen, ein Balken, eine Geraetezeile.
+                 Die grosse Tafel stand vorher ganz oben und kostete 150dp,
+                 bevor ueberhaupt ein Bedienelement zu sehen war. -->
 
             <LinearLayout
-                android:id="@+id/group_progress"
+                android:id="@+id/stats_board"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/input_background"
                 android:orientation="vertical"
-                android:visibility="gone">
+                android:padding="14dp">
 
-                <TextView
-                    android:id="@+id/text_percent"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
-                    android:letterSpacing="0.05"
-                    android:textColor="@color/nothing_white"
-                    android:textSize="34sp" />
-
-                <view
-                    class="com.steimerbyte.bulkcompressor.ui.SegmentBar"
-                    android:id="@+id/segment_bar"
-                    android:layout_width="match_parent"
-                    android:layout_height="26dp"
-                    android:layout_marginTop="10dp" />
-
-                <TextView
-                    android:id="@+id/text_current"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:ellipsize="end"
-                    android:fontFamily="monospace"
-                    android:maxLines="1"
-                    android:textColor="@color/nothing_grey"
-                    android:textSize="12sp" />
+                    android:orientation="horizontal">
 
-                <TextView
-                    android:id="@+id/text_totals"
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="monospace"
+                        android:letterSpacing="0.16"
+                        android:text="@string/stats_heap_label"
+                        android:textColor="@color/nothing_dim"
+                        android:textSize="9sp" />
+
+                    <TextView
+                        android:id="@+id/text_stats_memory_state"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:letterSpacing="0.16"
+                        android:textColor="@color/nothing_white"
+                        android:textSize="9sp" />
+                </LinearLayout>
+
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:fontFamily="monospace"
-                    android:textColor="@color/nothing_dim"
-                    android:textSize="11sp" />
+                    android:baselineAligned="true"
+                    android:orientation="horizontal">
 
+                    <TextView
+                        android:id="@+id/text_stats_heap"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:letterSpacing="0.02"
+                        android:text="—"
+                        android:textColor="@color/nothing_white"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/text_stats_heap_total"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:fontFamily="monospace"
+                        android:letterSpacing="0.04"
+                        android:text="/ —"
+                        android:textColor="@color/nothing_dim"
+                        android:textSize="10sp" />
+                </LinearLayout>
+
+                <com.steimerbyte.bulkcompressor.ui.SegmentBar
+                    android:id="@+id/bar_stats_heap"
+                    android:layout_width="match_parent"
+                    android:layout_height="4dp"
+                    android:layout_marginTop="6dp" />
+
+                <TextView
+                    android:id="@+id/text_stats_device"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:fontFamily="monospace"
+                    android:letterSpacing="0.04"
+                    android:text="@string/stats_device_unknown"
+                    android:textColor="@color/nothing_grey"
+                    android:textSize="10sp" />
+
+                <LinearLayout
+                    android:id="@+id/group_stats_saved"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginTop="12dp"
+                        android:background="@color/nothing_outline" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/text_stats_saved"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:fontFamily="monospace"
+                            android:letterSpacing="0.02"
+                            android:text="0 MB"
+                            android:textColor="@color/nothing_white"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="monospace"
+                            android:letterSpacing="0.2"
+                            android:text="@string/stats_freed_label"
+                            android:textColor="@color/nothing_dim"
+                            android:textSize="9sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/text_stats_saved_detail"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:fontFamily="monospace"
+                        android:letterSpacing="0.04"
+                        android:textColor="@color/nothing_grey"
+                        android:textSize="10sp" />
+                </LinearLayout>
             </LinearLayout>
 
-            <!-- Start und Stopp in einem Knopf, ganz unten: die Beschriftung
-                 folgt dem Zustand aus JobBus, nicht dem letzten Klick. -->
+            <!-- ====================== 7. ZUSAMMENFASSUNG ====================== -->
 
-            <Button
-                android:id="@+id/button_start"
+            <TextView
+                style="@style/SectionLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/label_active_config" />
+
+            <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:layout_marginTop="22dp"
-                android:background="@drawable/button_background"
-                android:fontFamily="monospace"
-                android:letterSpacing="0.08"
-                android:text="@string/button_start"
-                android:textAllCaps="false"
-                android:textColor="@color/nothing_black"
-                android:textSize="14sp" />
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/input_background"
+                android:orientation="vertical"
+                android:padding="14dp">
+
+                <TextView
+                    android:id="@+id/text_estimate"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:lineSpacingExtra="2dp"
+                    android:textColor="@color/nothing_grey"
+                    android:textSize="11sp"
+                    android:visibility="gone" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@color/nothing_outline" />
+
+                <TextView
+                    android:id="@+id/text_active_config"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:fontFamily="monospace"
+                    android:lineSpacingExtra="3dp"
+                    android:textColor="@color/nothing_white"
+                    android:textSize="11sp" />
+            </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="28dp"
+                android:layout_marginTop="20dp"
                 android:fontFamily="monospace"
                 android:letterSpacing="0.16"
                 android:text="@string/footer"
@@ -803,7 +842,95 @@
     <include
         layout="@layout/view_terminal"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom" />
+        android:layout_height="wrap_content" />
 
-</FrameLayout>
+    <!-- ============================ AKTIONSLEISTE ============================ -->
+
+    <LinearLayout
+        android:id="@+id/action_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/nothing_black"
+        android:orientation="vertical"
+        android:paddingStart="24dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="16dp">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/nothing_outline" />
+
+        <!-- Fortschritt: sichtbar, sobald ein Lauf gemeldet wurde, und
+             danach stehen lassend, damit das Ergebnis lesbar bleibt. -->
+
+        <LinearLayout
+            android:id="@+id/group_progress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:baselineAligned="true"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/text_percent"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:letterSpacing="0.02"
+                    android:textColor="@color/nothing_white"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/text_totals"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:fontFamily="monospace"
+                    android:gravity="end"
+                    android:textColor="@color/nothing_dim"
+                    android:textSize="10sp" />
+            </LinearLayout>
+
+            <com.steimerbyte.bulkcompressor.ui.SegmentBar
+                android:id="@+id/segment_bar"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:id="@+id/text_current"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:ellipsize="middle"
+                android:fontFamily="monospace"
+                android:maxLines="1"
+                android:textColor="@color/nothing_grey"
+                android:textSize="10sp" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/button_start"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/button_background"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.08"
+            android:text="@string/button_start"
+            android:textAllCaps="false"
+            android:textColor="@color/nothing_black"
+            android:textSize="15sp" />
+    </LinearLayout>
+
+</LinearLayout>

@@ -8,6 +8,9 @@ import android.widget.SeekBar
 import android.widget.TextView
 import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.model.CompressSettings
+import com.steimerbyte.bulkcompressor.model.MediaItem
+import com.steimerbyte.bulkcompressor.model.MediaKind
+import com.steimerbyte.bulkcompressor.model.ScanResult
 import com.steimerbyte.bulkcompressor.ui.StatsBoard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -66,13 +69,16 @@ class MainActivitySmokeTest {
 
         // Werkseinstellung ist der Aufloesungsmodus: Bitrate wirkt nicht.
         assertFalse("Bitrate darf im Aufloesungsmodus nicht bedienbar sein", seekBitrate.isEnabled)
-        assertTrue(statusResolution.text.toString().contains("AKTIV"))
+        // Der wirksame Abschnitt bekommt kein Label - nur die Ausnahme
+        // wird beschriftet, sonst steht ueberall "AKTIV".
+        assertEquals(View.GONE, statusResolution.visibility)
 
         // Auf Bitrate umschalten (Chip 0): umgekehrtes Bild.
         modeChips.getChildAt(0).performClick()
         shadowOf(Looper.getMainLooper()).idle()
 
         assertTrue("Bitrate muss im Bitratenmodus bedienbar sein", seekBitrate.isEnabled)
+        assertEquals(View.VISIBLE, statusResolution.visibility)
         val status = statusResolution.text.toString()
         assertTrue("Auflösung muss als inaktiv markiert sein, war: $status", status.contains("INAKTIV"))
     }
@@ -174,6 +180,56 @@ class MainActivitySmokeTest {
 
         val markSound = activity.findViewById<TextView>(R.id.mark_sound)
         assertNotNull("Schalter fuer Klickgeraeusche fehlt im Layout", markSound)
+    }
+
+    @Test
+    fun `abschnitte mit auswahl tragen kein aktiv-label`() {
+        val activity = activity()
+        val items = listOf(
+            MediaItem(
+                uri = android.net.Uri.parse("content://test/document/VID_1.mp4"),
+                docId = "v1",
+                parentId = "p",
+                displayName = "VID_1.mp4",
+                mime = "video/mp4",
+                sizeBytes = 10_000_000L,
+                lastModified = 1L,
+                kind = MediaKind.VIDEO
+            ),
+            MediaItem(
+                uri = android.net.Uri.parse("content://test/document/IMG_1.jpg"),
+                docId = "i1",
+                parentId = "p",
+                displayName = "IMG_1.jpg",
+                mime = "image/jpeg",
+                sizeBytes = 2_000_000L,
+                lastModified = 1L,
+                kind = MediaKind.IMAGE
+            )
+        )
+        activity.applyScanForTest(
+            android.net.Uri.parse("content://test/tree/p"),
+            ScanResult(items = items, folderCount = 0, truncated = false)
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+
+        // Beide Arten sind ausgewaehlt: beide Abschnitte wirken, also
+        // steht dort nichts. Ein sichtbares "AKTIV" waere Rauschen.
+        assertEquals(View.GONE, activity.findViewById<TextView>(R.id.status_video).visibility)
+        assertEquals(View.GONE, activity.findViewById<TextView>(R.id.status_images).visibility)
+
+        // Nur die Auswahl der Videos aufheben: dann ist der Videoabschnitt
+        // die Ausnahme und muss es sagen.
+        activity.findViewById<View>(R.id.button_select_none).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(
+            View.VISIBLE,
+            activity.findViewById<TextView>(R.id.status_video).visibility
+        )
+        assertEquals(
+            View.VISIBLE,
+            activity.findViewById<TextView>(R.id.status_images).visibility
+        )
     }
 
     // ------------------------------------------------------------------

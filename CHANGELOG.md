@@ -4,6 +4,48 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.5.0] – 2026-10-31
+
+### Geändert
+
+- **Der Bildschirm ist nach der Arbeitsreihenfolge sortiert.** Oben Ordner
+  und Dateiauswahl, dann Video, Bilder, Ausgabe und Optionen, darunter
+  Speicherstand und eine Zusammenfassung der Einstellungen. Vorher stand
+  die Auswahl nach den Presets, und die Zusammenfassung lag über dem
+  Startknopf, wo sie je nach Dateizahl den halben Bildschirm füllte.
+- **Der Startknopf ist immer erreichbar.** Er sitzt fest am unteren Rand;
+  Inhalt und Protokoll scrollen bzw. schieben sich darüber. Bei einem
+  Ordner mit hunderten Dateien war er vorher erst nach langem Wischen zu
+  sehen.
+- **Das Protokoll schiebt den Inhalt, statt ihn zu verdecken.** Die
+  feste Reserve unter dem Inhalt (`paddingBottom`) entfällt; ein
+  aufgeklapptes Terminal verdeckt keine Bedienelemente mehr.
+- **Chip-Reihen brechen um, statt abzuschneiden** (`WrappingRowLayout`).
+  Auf 360 dp Breite lagen „720p" und „480p" außerhalb des Bildschirms —
+  eine Auswahl, die es gibt, aber nicht antippbar war. Die sechs
+  `HorizontalScrollView`-Zeilen sind ersetzt; gewischt wird nicht mehr.
+- **Statuslabels nennen nur noch die Ausnahme.** Ein Abschnitt, der
+  wirkt, trägt kein „● AKTIV" mehr; sichtbar ist „INAKTIV" bzw.
+  „NICHTS AUSGEWÄHLT". Bis zu fünf gleichzeitige „AKTIV"-Labels hatten
+  genau dem Wort den Wert genommen, auf das es ankommt.
+- **Ein gesperrter Startknopf sieht gesperrt aus** — schwache Kante,
+  graue Schrift statt weißer Fläche mit schwarzer Schrift.
+- **Die Zusammenfassung ist eine Spalte.** `VIDEO`, `BILDER`, `AUSGABE`
+  und `OPTIONEN` stehen untereinander mit gleicher Einrückung; die
+  Ausgabezeile mit Zeitstempel und EXIF ist auf zwei Zeilen verteilt,
+  damit sie auf schmalen Geräten nicht mitten in der Spalte umbricht.
+- Die Mengenzeile zeigt nur noch, **was** ausgewählt ist (Anzahl und
+  Größe). Auflösung und Qualität standen dort ein zweites Mal und stehen
+  jetzt nur im Konfigurationsblock.
+
+### Behoben
+
+- Die Zusammenfassungszeile unter dem Ordnerknopf blieb unsichtbar, wenn
+  die Auswahl ohne `startScan()` ankam (wiederhergestellter Zustand) —
+  sie hängt nicht mehr an der Reihenfolge der Aufrufe.
+- Bei leerer Auswahl blieb in der Mengenzeile ein einzelner Bindestrich
+  stehen; die Zeile wird jetzt ausgeblendet.
+
 ## [1.4.1] – 2026-10-31
 
 ### Behoben

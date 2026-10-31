@@ -22,8 +22,12 @@ import java.util.Locale
  */
 object CrashGuard {
 
-    /** So viele Ringpuffer-Zeilen landen im Bericht. */
-    private const val RING_LINES = 200
+    /**
+     * So viele Ringpuffer-Zeilen landen im Bericht. Der Ring fasst 2000;
+     * beim Absturz synchron zu schreiben ist unkritisch, und der Vorlauf
+     * ist genau das, was den Fehler erklaert.
+     */
+    private const val RING_LINES = 2000
 
     @Volatile
     private var installed = false
@@ -69,12 +73,28 @@ object CrashGuard {
      */
     private fun writeReport(context: Context, thread: Thread, error: Throwable) {
         val dir = logDir ?: File(context.filesDir, "logs")
-        val sink = LogFile(dir)
-        sink.appendCrash(
-            header = buildHeader(context, thread),
-            ring = Log.snapshot(RING_LINES),
-            stackTrace = stackTraceOf(error)
-        )
+        val header = buildHeader(context, thread)
+        val ring = Log.snapshot(RING_LINES)
+        val trace = stackTraceOf(error)
+        // Zuerst der app-private Speicher: der ist immer schreibbar und
+        // geht beim naechsten Start in die Download-Datei mit.
+        runCatching {
+            LogFile(dir).appendCrash(header = header, ring = ring, stackTrace = trace)
+        }
+        // Zusaetzlich direkt nach Download/, damit der Bericht ohne
+        // App-Neustart auf den Rechner geholt werden kann. Best effort:
+        // scheitert es (keine Berechtigung, alter Android ohne
+        // Download-Schreibrecht), bleibt der interne Bericht.
+        runCatching {
+            val report = buildString {
+                append(header).append('\n')
+                append("---- Vorlauf (").append(ring.size).append(" Zeilen) ----\n")
+                for (line in ring) append(line.format()).append('\n')
+                append("---- Stacktrace ----\n")
+                append(trace)
+            }
+            DownloadsLog.writeCrash(context, report)
+        }
     }
 
     private fun buildHeader(context: Context, thread: Thread): String {
@@ -88,6 +108,15 @@ object CrashGuard {
                 .append(" (SDK ").append(Build.VERSION.SDK_INT).append(")\n")
             append("Thread:   ").append(thread.name).append('\n')
             append("PID:      ").append(android.os.Process.myPid()).append('\n')
+            val runtime = Runtime.getRuntime()
+            append("Speicher: max ").append(runtime.maxMemory() / (1024 * 1024)).append(" MB")
+                .append(" · belegt ").append((runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024))
+                .append(" MB · frei ").append(runtime.freeMemory() / (1024 * 1024)).append(" MB\n")
+            runCatching {
+                append("Cache:    ").append(context.cacheDir.usableSpace / (1024 * 1024)).append(" MB frei\n")
+            }
+            append("ABI:      ").append(Build.SUPPORTED_ABIS.firstOrNull() ?: "?").append('\n')
+            append("Logdatei: ").append(Log.downloadLogPath() ?: "keine (Download nicht beschreibbar)").append('\n')
         }
     }
 

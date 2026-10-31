@@ -140,8 +140,14 @@ class TerminalPanel(
 
     private fun wireBar() {
         // Tippen klappt um; ans Ende springt nur der "v NEU"-Hinweis.
-        bar.setOnClickListener { applyExpanded(!expanded) }
-        newView.setOnClickListener { jumpToEnd() }
+        bar.setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
+            applyExpanded(!expanded)
+        }
+        newView.setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
+            jumpToEnd()
+        }
 
         bar.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -187,18 +193,22 @@ class TerminalPanel(
 
     private fun wireToolbar() {
         panel.findViewById<View>(R.id.terminal_action_copy).setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
             copyToClipboard()
             onCopy()
         }
         panel.findViewById<View>(R.id.terminal_action_share).setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
             onShare()
         }
         panel.findViewById<View>(R.id.terminal_action_clear).setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
             // Auch ohne Zutun des Aufrufers muss die Anzeige leer werden.
             clearView()
             onClear()
         }
         panel.findViewById<View>(R.id.terminal_action_close).setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
             applyExpanded(false)
         }
     }

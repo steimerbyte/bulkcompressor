@@ -14,6 +14,7 @@ import android.view.Surface
 import com.steimerbyte.bulkcompressor.log.Log
 import java.io.File
 import java.nio.ByteBuffer
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
@@ -54,12 +55,26 @@ class VideoTranscoder(private val context: Context) {
         var audioMime: String? = null
         var frameRate = 0
         var bitrate = 0
+        var trackCount = 0
+        var videoIndex = -1
+        var audioIndex = -1
         try {
             extractor.setDataSource(context, uri, null)
-            for (i in 0 until extractor.trackCount) {
+            trackCount = extractor.trackCount
+            for (i in 0 until trackCount) {
                 val format = extractor.getTrackFormat(i)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                Log.d(
+                    "Video",
+                    "Probe Spur $i/$trackCount: $mime" +
+                        " · maxInputSize ${formatValue(format, MediaFormat.KEY_MAX_INPUT_SIZE)}" +
+                        if (mime.startsWith("video/")) {
+                            " · Profil ${formatValue(format, MediaFormat.KEY_PROFILE)}" +
+                                " · Level ${formatValue(format, MediaFormat.KEY_LEVEL)}"
+                        } else ""
+                )
                 if (mime.startsWith("video/") && videoMime == null) {
+                    videoIndex = i
                     videoMime = mime
                     frameRate = if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
                         format.getInteger(MediaFormat.KEY_FRAME_RATE)
@@ -68,6 +83,7 @@ class VideoTranscoder(private val context: Context) {
                         format.getInteger(MediaFormat.KEY_BIT_RATE)
                     } else 0
                 } else if (mime.startsWith("audio/") && audioMime == null) {
+                    audioIndex = i
                     audioMime = mime
                 }
             }
@@ -96,11 +112,25 @@ class VideoTranscoder(private val context: Context) {
                     ?.toFloatOrNull()?.toInt() ?: 0
             }
             if (width <= 0 || height <= 0) throw TranscodeException("Aufloesung nicht ermittelbar")
+            Log.d(
+                "Video",
+                "Metadaten: ${width}x${height} · Drehung $rotation° · $duration ms" +
+                    " · Bitrate ${bitrate / 1000} kbit/s · Capture-${frameRate} fps"
+            )
+            if (audioMime == null) {
+                Log.d("Video", "Container ohne Tonspur - Ausgabe bleibt stumm")
+            }
             Log.i(
                 "Video",
                 "Probe: ${width}x${height} · Drehung $rotation°" +
                     " · ${if (frameRate > 0) frameRate else 30} fps · ${bitrate / 1000} kbit/s" +
                     " · $mimeType · Ton ${audioMime ?: "keine"} · ${duration / 1000} s"
+            )
+            Log.d(
+                "Video",
+                "Track-Auswahl: videoTrack=${if (videoIndex >= 0) videoIndex.toString() else "keine"}" +
+                    " · audioTrack=${if (audioIndex >= 0) audioIndex.toString() else "keine"}" +
+                    " · $trackCount Spuren"
             )
             return VideoSourceInfo(
                 width = width,
@@ -158,6 +188,13 @@ class VideoTranscoder(private val context: Context) {
             } else {
                 normalizeRotation(orientationHint)
             }
+            Log.d(
+                "Video",
+                "Quelle: ${extractor.trackCount} Spuren · videoTrack=$videoTrackIndex" +
+                    " · audioTrack=${if (audioTrackIndex >= 0) audioTrackIndex.toString() else "keine"}" +
+                    " · Drehung $rotation° aus " +
+                    if (formatRotation != 0) "dem Track-Format ($formatRotation)" else "den Metadaten ($orientationHint)"
+            )
             Log.i(
                 "Video",
                 "Transcode ${target.name}: ${plan.width}x${plan.height} @ ${plan.bitrate / 1000} kbit/s" +
@@ -166,9 +203,48 @@ class VideoTranscoder(private val context: Context) {
                     " · Clip ${durationMs / 1000} s"
             )
 
+            // Eingangsmasse fuer den Skalier-Faktor am Ende; sie stehen
+            // im Track-Format kodiert, also vor jeder Drehung.
+            val sourceWidth = if (sourceFormat.containsKey(MediaFormat.KEY_WIDTH)) {
+                sourceFormat.getInteger(MediaFormat.KEY_WIDTH)
+            } else 0
+            val sourceHeight = if (sourceFormat.containsKey(MediaFormat.KEY_HEIGHT)) {
+                sourceFormat.getInteger(MediaFormat.KEY_HEIGHT)
+            } else 0
+            // Grobe Erwartung allein aus der Zielbitrate der Videospur.
+            val estimatedBytes = (durationMs / 1000.0 * plan.bitrate / 8.0).toLong()
+            Log.d(
+                "Video",
+                "Bitrate: Quelle ${plan.sourceBitrate / 1000} kbit/s" +
+                    " -> Ziel ${plan.bitrate / 1000} kbit/s" +
+                    " (${String.format(Locale.US, "%.0f", plan.bitrateRatio * 100)} %)" +
+                    " · Skalierung ${if (plan.scaleChanged) "ja" else "nein"}"
+            )
+            Log.d(
+                "Video",
+                "Ziel ${target.absolutePath}: vor dem Start ${target.length()} B" +
+                    " · geschaetzt ${mb(estimatedBytes)} Videospur" +
+                    " (${plan.bitrate / 1000} kbit/s ueber ${durationMs / 1000} s)"
+            )
+
             val started = startEncoder(plan)
             val encoder = started.codec
             val fitted = started.plan
+            val planNote = if (fitted != plan) {
+                "Plan angepasst: ${plan.width}x${plan.height}" +
+                    " @ ${plan.bitrate / 1000} kbit/s -> ${fitted.width}x${fitted.height}" +
+                    " @ ${fitted.bitrate / 1000} kbit/s"
+            } else {
+                "Plan unveraendert ${plan.width}x${plan.height}" +
+                    " @ ${plan.bitrate / 1000} kbit/s"
+            }
+            val candidateText = encoderCandidates(plan).joinToString(", ")
+            Log.i(
+                "Video",
+                "Encoder-Auswahl: ${encoder.name} · ${hardwareLabel(encoder)}" +
+                    " · maxInstances=${maxInstances(encoder, fitted.codecMime)}" +
+                    " · Kandidaten $candidateText · $planNote"
+            )
 
             var decoder: MediaCodec? = null
             val session = MuxerSession(
@@ -176,15 +252,26 @@ class VideoTranscoder(private val context: Context) {
                 rotation,
                 if (audioTrackIndex >= 0) 2 else 1
             )
+            Log.d(
+                "Video",
+                "Muxer: MP4 nach ${target.absolutePath} · ${if (audioTrackIndex >= 0) 2 else 1} Spuren erwartet" +
+                    " · Drehung im Container $rotation°"
+            )
             var audioThread: Thread? = null
             try {
                 decoder = MediaCodec.createDecoderByType(sourceMime)
                 decoder.configure(sourceFormat, started.surface, null, 0)
                 decoder.start()
                 extractor.selectTrack(videoTrackIndex)
+                Log.d(
+                    "Video",
+                    "Decoder: ${decoder.name} · $sourceMime · Spur $videoTrackIndex" +
+                        " · Surface-Eingang fuer ${fitted.width}x${fitted.height}"
+                )
 
                 if (audioTrackIndex >= 0) {
                     val index = audioTrackIndex
+                    Log.d("Video", "Tonspur laeuft parallel in eigenem Thread (Spur $index)")
                     audioThread = Thread({
                         try {
                             writeAudio(uri, index, session) { abort.get() || isCancelled() }
@@ -200,6 +287,8 @@ class VideoTranscoder(private val context: Context) {
                 audioThread?.join(10_000)
                 if (audioThread?.isAlive == true) {
                     Log.w("Video", "Tonspur-Thread nach 10 s noch aktiv - Tonspur abgeschnitten")
+                } else if (audioThread != null) {
+                    Log.d("Video", "Tonspur-Thread regulaer beendet")
                 }
                 session.rethrowFailure()
                 val frames = session.videoFrameCount()
@@ -210,9 +299,19 @@ class VideoTranscoder(private val context: Context) {
                 if (audioTrackIndex >= 0 && audioBytes <= 0L) {
                     Log.w("Video", "Tonspur vorhanden, aber 0 Audiobytes gemuxt")
                 }
+                val fileBytes = target.length()
+                val outBitrateKbit = if (durationMs > 0) {
+                    (fileBytes * 8 / (durationMs / 1000.0) / 1000).toLong()
+                } else 0L
+                val inPixels = sourceWidth.toLong() * sourceHeight
+                val outPixels = fitted.width.toLong() * fitted.height
+                val scalePercent = if (inPixels > 0) outPixels * 100 / inPixels else 100L
                 Log.i(
                     "Video",
-                    "gemuxt: $frames Frames · $audioBytes B Audio · ${target.length()} B Datei"
+                    "gemuxt: $frames Frames · $audioBytes B Audio · $fileBytes B Datei" +
+                        " (= ${mb(fileBytes)}) · Ausgabe ${outBitrateKbit} kbit/s im Schnitt" +
+                        " · Skalierung ${fitted.width}x${fitted.height} von" +
+                        " ${sourceWidth}x${sourceHeight} = $scalePercent % der Flaeche"
                 )
                 return fitted
             } finally {
@@ -255,6 +354,27 @@ class VideoTranscoder(private val context: Context) {
         var inputDone = false
         var outputDone = false
 
+        // Zaehler fuer die Verdichtungszeile am Ende - pro Frame wird
+        // nichts geschrieben, sonst waere das Protokoll unlesbar.
+        var samples = 0L
+        var rendered = 0L
+        var bytesIn = 0L
+        var smallest = Long.MAX_VALUE
+        var largest = 0L
+        var inputStalls = 0L
+        var tryAgainLater = 0L
+        // Bitmaske der erreichten Meilensteine: 10/25/50/75 %, je ein Bit.
+        var milestones = 0
+        var lastTimestampUs = 0L
+        val startedNs = System.nanoTime()
+        val encoderStats = EncoderStats()
+        Log.d(
+            "Video",
+            "Videospur startet: Clip ${durationMs / 1000} s (${durationUs} us)" +
+                " · Fortschritt nach Sample-Zeitstempel" +
+                " · Stufen ${MILESTONES.joinToString("/")} %"
+        )
+
         while (!outputDone) {
             if (isCancelled()) throw JobCancelledException()
 
@@ -270,14 +390,49 @@ class VideoTranscoder(private val context: Context) {
                             MediaCodec.BUFFER_FLAG_END_OF_STREAM
                         )
                         inputDone = true
+                        Log.d(
+                            "Video",
+                            "Video-Eingabe am Ende: $samples Samples · ${mb(bytesIn)}" +
+                                " · letzte Medienzeit ${clock(lastTimestampUs)}" +
+                                " · ab hier nur noch Encoder-Rest ausgeben"
+                        )
                     } else {
                         val timestamp = extractor.sampleTime
                         decoder.queueInputBuffer(inputIndex, 0, size, timestamp, 0)
+                        samples++
+                        bytesIn += size
+                        val sampleBytes = size.toLong()
+                        if (sampleBytes < smallest) smallest = sampleBytes
+                        if (sampleBytes > largest) largest = sampleBytes
+                        lastTimestampUs = if (timestamp > 0) timestamp else lastTimestampUs
                         extractor.advance()
                         if (durationUs > 0) {
                             onProgress((timestamp.toFloat() / durationUs).coerceIn(0f, 1f))
                         }
+                        // Meilensteine 10/25/50/75 %: die Bitmaske sorgt
+                        // dafuer, dass jeder Schritt genau einmal kommt.
+                        if (durationUs > 0L) {
+                            val percent = (timestamp * 100 / durationUs).toInt()
+                            var step = 0
+                            while (step < MILESTONES.size) {
+                                val mask = 1 shl step
+                                if (percent >= MILESTONES[step] && milestones and mask == 0) {
+                                    milestones = milestones or mask
+                                    Log.i(
+                                        "Video",
+                                        "Fortschritt ${MILESTONES[step]} %" +
+                                            " · Medien ${clock(timestamp)}" +
+                                            " · Wand ${seconds(startedNs)} s" +
+                                            " · ${speed(timestamp, startedNs)}x Echtzeit" +
+                                            " · Rest ca. ${remaining(timestamp, startedNs, durationUs)}"
+                                    )
+                                }
+                                step++
+                            }
+                        }
                     }
+                } else {
+                    inputStalls++
                 }
             }
 
@@ -285,20 +440,52 @@ class VideoTranscoder(private val context: Context) {
             if (outputIndex >= 0) {
                 // true = auf die Encoder-Surface rendern, kein Byte im Heap
                 decoder.releaseOutputBuffer(outputIndex, true)
+                rendered++
                 if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
+            } else if (outputIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                tryAgainLater++
             }
 
             // Encoder entleeren, sonst laeuft die Surface-Queue voll und
             // der Decoder blockiert dauerhaft.
-            drainEncoder(encoder, session, untilEos = false)
+            drainEncoder(encoder, session, encoderStats, untilEos = false)
         }
 
         encoder.signalEndOfInputStream()
-        drainEncoder(encoder, session, untilEos = true)
+        drainEncoder(encoder, session, encoderStats, untilEos = true)
         onProgress(1f)
+        Log.i(
+            "Video",
+            "Fortschritt 100 % · Medien ${clock(lastTimestampUs)}" +
+                " · Wand ${seconds(startedNs)} s · ${speed(lastTimestampUs, startedNs)}x Echtzeit" +
+                " · Rest ca. 0 s"
+        )
+        Log.i(
+            "Video",
+            "Encoder-Ausgabe: ${encoderStats.buffers} Puffer · ${encoderStats.configBuffers} Konfig-Puffer" +
+                " · ${mb(encoderStats.bytes)} kodiert" +
+                " · PTS ${encoderStats.firstPtsUs / 1000} ms bis ${encoderStats.lastPtsUs / 1000} ms"
+        )
+        Log.i(
+            "Video",
+            "Video verdichtet: $samples Samples gelesen · $rendered Decoder-Frames gerendert" +
+                " · ${mb(bytesIn)} gelesen" +
+                (if (samples > 0) {
+                    " · Sample ${smallest / 1024} KiB bis ${largest / 1024} KiB"
+                } else "") +
+                " · $inputStalls Stalls (Eingabe)" +
+                " · $tryAgainLater Wartezeiten (Ausgabe)" +
+                " · Medien ${clock(lastTimestampUs)} · Wand ${seconds(startedNs)} s" +
+                " · ${speed(lastTimestampUs, startedNs)}x Echtzeit"
+        )
     }
 
-    private fun drainEncoder(encoder: MediaCodec, session: MuxerSession, untilEos: Boolean) {
+    private fun drainEncoder(
+        encoder: MediaCodec,
+        session: MuxerSession,
+        stats: EncoderStats,
+        untilEos: Boolean
+    ) {
         val info = MediaCodec.BufferInfo()
         while (true) {
             val index = encoder.dequeueOutputBuffer(info, if (untilEos) 10_000 else 0)
@@ -317,12 +504,23 @@ class VideoTranscoder(private val context: Context) {
                     session.addVideoTrack(outputFormat)
                 }
                 index >= 0 -> {
+                    stats.buffers++
                     val buffer = encoder.getOutputBuffer(index)
+                    if (info.size > 0) {
+                        stats.bytes += info.size.toLong()
+                        if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                            stats.configBuffers++
+                        }
+                    }
                     if (buffer != null && info.size > 0 &&
                         info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0
                     ) {
                         buffer.position(info.offset)
                         buffer.limit(info.offset + info.size)
+                        // PTS vor dem Muxen abgreifen: writeVideo setzt sie
+                        // auf den Nullpunkt der Datei zurueck.
+                        if (stats.firstPtsUs < 0) stats.firstPtsUs = info.presentationTimeUs
+                        stats.lastPtsUs = info.presentationTimeUs
                         session.writeVideo(buffer, info)
                     }
                     encoder.releaseOutputBuffer(index, false)
@@ -352,6 +550,13 @@ class VideoTranscoder(private val context: Context) {
                 Log.w("Video", "Tonspur ohne MIME-Typ - wird nicht gemuxt")
                 return
             }
+            Log.d(
+                "Video",
+                "Tonspur-Quelle: $mime · ${formatValue(format, MediaFormat.KEY_SAMPLE_RATE)} Hz" +
+                    " · ${formatValue(format, MediaFormat.KEY_CHANNEL_COUNT)} Kanaele" +
+                    " · maxInputSize ${formatValue(format, MediaFormat.KEY_MAX_INPUT_SIZE)}" +
+                    " · Spur $trackIndex"
+            )
             if (mime == AUDIO_AAC) {
                 Log.d("Video", "Tonspur: $mime wird durchgereicht")
                 passthroughAudio(extractor, format, session, isCancelled)
@@ -377,6 +582,10 @@ class VideoTranscoder(private val context: Context) {
         } else AUDIO_BUFFER
         val buffer = ByteBuffer.allocateDirect(maxSize)
         val info = MediaCodec.BufferInfo()
+        var samples = 0L
+        var bytes = 0L
+        var firstPtsUs = -1L
+        var lastPtsUs = -1L
 
         while (true) {
             if (isCancelled()) throw JobCancelledException()
@@ -385,10 +594,22 @@ class VideoTranscoder(private val context: Context) {
             if (size < 0) break
             buffer.position(0)
             buffer.limit(size)
-            info.set(0, size, extractor.sampleTime, 0)
+            val pts = extractor.sampleTime
+            info.set(0, size, pts, 0)
             session.writeAudio(track, buffer, info)
+            samples++
+            bytes += size
+            if (firstPtsUs < 0) firstPtsUs = pts
+            lastPtsUs = pts
             extractor.advance()
         }
+        Log.i(
+            "Video",
+            "Ton durchgereicht: $samples Samples · ${mb(bytes)}" +
+                " · ${if (samples > 0) bytes / samples else 0} B im Schnitt" +
+                " · PTS ${firstPtsUs.coerceAtLeast(0) / 1000} ms bis" +
+                " ${lastPtsUs.coerceAtLeast(0) / 1000} ms"
+        )
     }
 
     /** Opus/Vorbis/PCM -> AAC LC, damit der MP4-Container passt. */
@@ -411,6 +632,12 @@ class VideoTranscoder(private val context: Context) {
         try {
             decoder.configure(sourceFormat, null, null, 0)
             decoder.start()
+            Log.d(
+                "Video",
+                "Ton-Decoder: ${decoder.name} · $sourceMime" +
+                    " · ${formatValue(sourceFormat, MediaFormat.KEY_SAMPLE_RATE)} Hz" +
+                    " · ${formatValue(sourceFormat, MediaFormat.KEY_CHANNEL_COUNT)} Kanaele"
+            )
 
             val encoderFormat = MediaFormat.createAudioFormat(
                 AUDIO_AAC,
@@ -425,12 +652,22 @@ class VideoTranscoder(private val context: Context) {
             encoderFormat.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 32 * 1024)
             encoder.configure(encoderFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             encoder.start()
+            Log.i(
+                "Video",
+                "Ton-Encoder: ${encoder.name} · ${hardwareLabel(encoder)} · $AUDIO_AAC" +
+                    " · ${sampleRate} Hz · ${channels.coerceIn(1, 2)} Kanaele · 128 kbit/s" +
+                    " · Quelle $sourceMime"
+            )
 
             val decoderInfo = MediaCodec.BufferInfo()
             val encoderInfo = MediaCodec.BufferInfo()
             var decoderEos = false
             var encoderTrack = -1
             var encoderDone = false
+            var samplesOut = 0L
+            var bytesOut = 0L
+            var firstPtsUs = -1L
+            var lastPtsUs = -1L
 
             while (!encoderDone) {
                 if (isCancelled()) throw JobCancelledException()
@@ -501,7 +738,14 @@ class VideoTranscoder(private val context: Context) {
                             if (encoderTrack < 0) {
                                 Log.w("Video", "Audiospur ohne Muxer-Track - writeSampleData folgt trotzdem")
                             }
+                            // PTS vor writeAudio lesen: der Muxer setzt sie
+                            // auf den Nullpunkt der Datei zurueck.
+                            val pts = encoderInfo.presentationTimeUs
                             session.writeAudio(encoderTrack, encoded, encoderInfo)
+                            samplesOut++
+                            bytesOut += encoderInfo.size
+                            if (firstPtsUs < 0) firstPtsUs = pts
+                            lastPtsUs = pts
                         }
                         encoder.releaseOutputBuffer(encodedIndex, false)
                         if (encoderInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
@@ -510,6 +754,13 @@ class VideoTranscoder(private val context: Context) {
                     }
                 }
             }
+            Log.i(
+                "Video",
+                "Ton neu kodiert: $samplesOut Samples · ${mb(bytesOut)}" +
+                    " · ${if (samplesOut > 0) bytesOut / samplesOut else 0} B im Schnitt" +
+                    " · PTS ${firstPtsUs.coerceAtLeast(0) / 1000} ms bis" +
+                    " ${lastPtsUs.coerceAtLeast(0) / 1000} ms"
+            )
         } finally {
             quiet("Audio-Decoder.stop") { decoder.stop() }
             quiet("Audio-Decoder.release") { decoder.release() }
@@ -525,18 +776,25 @@ class VideoTranscoder(private val context: Context) {
     private class StartedEncoder(val codec: MediaCodec, val surface: Surface, val plan: VideoPlan)
 
     private fun startEncoder(plan: VideoPlan): StartedEncoder {
-        val candidates = if (plan.codecMime == PresetEngine.MIME_AVC) {
-            listOf(PresetEngine.MIME_AVC)
-        } else {
-            // HEVC ist auf alten Geraeten nicht immer vorhanden.
-            listOf(plan.codecMime, PresetEngine.MIME_AVC)
-        }
+        val candidates = encoderCandidates(plan)
         var lastError: Throwable? = null
         for (mime in candidates) {
             var codec: MediaCodec? = null
             var surface: Surface? = null
             try {
+                Log.d(
+                    "Video",
+                    "Encoder-Versuch $mime: Grenzen pruefen" +
+                        " (${plan.width}x${plan.height} @ ${plan.bitrate / 1000} kbit/s angefragt)"
+                )
                 val fitted = fitToEncoder(plan, mime)
+                if (fitted != plan) {
+                    Log.d(
+                        "Video",
+                        "Encoder-Grenzen $mime: ${plan.width}x${plan.height} @ ${plan.bitrate / 1000} kbit/s" +
+                            " -> ${fitted.width}x${fitted.height} @ ${fitted.bitrate / 1000} kbit/s"
+                    )
+                }
                 codec = MediaCodec.createEncoderByType(mime)
                 val format = MediaFormat.createVideoFormat(mime, fitted.width, fitted.height).apply {
                     setInteger(
@@ -573,6 +831,17 @@ class VideoTranscoder(private val context: Context) {
         )
     }
 
+    /**
+     * Reihenfolge der MIME-Typen, die der Encoder-Versuch durchprobiert.
+     * HEVC ist auf alten Geraeten nicht immer vorhanden, H.264 schon.
+     */
+    private fun encoderCandidates(plan: VideoPlan): List<String> =
+        if (plan.codecMime == PresetEngine.MIME_AVC) {
+            listOf(PresetEngine.MIME_AVC)
+        } else {
+            listOf(plan.codecMime, PresetEngine.MIME_AVC)
+        }
+
     /** Grobe Einordnung des Codecs fuer das Protokoll. */
     @Suppress("DEPRECATION")
     private fun hardwareLabel(codec: MediaCodec): String =
@@ -589,6 +858,50 @@ class VideoTranscoder(private val context: Context) {
     /** Zahl aus dem Format als Text; "-" wenn der Codec sie nicht meldet. */
     private fun formatValue(format: MediaFormat, key: String): String =
         if (format.containsKey(key)) format.getInteger(key).toString() else "-"
+
+    /** Bytes in MB mit einer Dezimalstelle. */
+    private fun mb(bytes: Long): String =
+        String.format(Locale.US, "%.1f MB", bytes.coerceAtLeast(0L) / 1024.0 / 1024.0)
+
+    /** Medienzeit als mm:ss. */
+    private fun clock(us: Long): String {
+        val totalSeconds = us.coerceAtLeast(0L) / 1000L
+        return String.format(
+            Locale.US,
+            "%d:%02d",
+            totalSeconds / 60,
+            totalSeconds % 60
+        )
+    }
+
+    /** Wandzeit in Sekunden mit einer Dezimalstelle. */
+    private fun seconds(startedNs: Long): String =
+        String.format(Locale.US, "%.1f", (System.nanoTime() - startedNs) / 1_000_000_000.0)
+
+    /** Verhaeltnis Medienzeit zu Wandzeit. */
+    private fun speed(mediaUs: Long, startedNs: Long): String {
+        val wallSeconds = (System.nanoTime() - startedNs) / 1_000_000_000.0
+        if (wallSeconds <= 0.0 || mediaUs <= 0L) return "0.0"
+        return String.format(Locale.US, "%.1f", (mediaUs / 1_000_000.0) / wallSeconds)
+    }
+
+    /** Restzeit aus dem bisherigen Tempo. */
+    private fun remaining(mediaUs: Long, startedNs: Long, durationUs: Long): String {
+        if (mediaUs <= 0L || durationUs <= mediaUs) return "0 s"
+        val wallSeconds = (System.nanoTime() - startedNs) / 1_000_000_000.0
+        if (wallSeconds <= 0.0) return "-"
+        val restSeconds = (durationUs - mediaUs) / 1_000_000.0 * wallSeconds / (mediaUs / 1_000_000.0)
+        return String.format(Locale.US, "%.0f s", restSeconds)
+    }
+
+    /** Zaehler der Encoder-Ausgabe; wird zwischen den Drains weitergereicht. */
+    private class EncoderStats {
+        var buffers = 0L
+        var configBuffers = 0L
+        var bytes = 0L
+        var firstPtsUs = -1L
+        var lastPtsUs = -1L
+    }
 
     /**
      * Fuehrt einen Aufraeumschritt aus und protokolliert einen Fehler,
@@ -734,7 +1047,11 @@ class VideoTranscoder(private val context: Context) {
             if (pendingTracks <= 0 && !started) {
                 muxer.start()
                 started = true
-                Log.d("Video", "Muxer gestartet (Video-Track $videoTrack, Audio-Track $audioTrack)")
+                Log.d(
+                    "Video",
+                    "Muxer gestartet (Video-Track $videoTrack, Audio-Track $audioTrack)" +
+                        " - ab hier werden Samples geschrieben"
+                )
                 ready.signalAll()
             }
         }
@@ -822,5 +1139,8 @@ class VideoTranscoder(private val context: Context) {
     companion object {
         private const val AUDIO_AAC = "audio/mp4a-latm"
         private const val AUDIO_BUFFER = 64 * 1024
+
+        /** Fortschrittsstufen, die genau eine Protokollzeile bekommen. */
+        private val MILESTONES = listOf(10, 25, 50, 75)
     }
 }

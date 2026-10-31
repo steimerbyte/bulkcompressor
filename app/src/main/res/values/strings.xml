@@ -46,6 +46,7 @@
     <string name="output_keep">ORIGINAL BEHALTEN</string>
     <string name="toggle_timestamps">Zeitstempel der Datei erhalten</string>
     <string name="toggle_exif">EXIF-Daten übernehmen</string>
+    <string name="toggle_sound">Klickgeräusche</string>
     <string name="output_hint_overwrite">Die Datei wird an ihrem Platz ersetzt. Name, Ordner und Galerie-Eintrag bleiben, deshalb rutscht nichts in der Zeitleiste.</string>
     <string name="output_hint_keep">Neben dem Original entsteht eine zweite Datei mit dem Zusatz „_compressed“. Originale bleiben unberührt.</string>
 

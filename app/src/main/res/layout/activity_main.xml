@@ -473,6 +473,34 @@
                     android:textSize="14sp" />
             </LinearLayout>
 
+            <LinearLayout
+                android:id="@+id/row_sound"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/input_background"
+                android:orientation="horizontal"
+                android:padding="14dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:fontFamily="sans-serif"
+                    android:text="@string/toggle_sound"
+                    android:textColor="@color/nothing_white"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/mark_sound"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="■"
+                    android:textColor="@color/nothing_white"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
             <TextView
                 android:id="@+id/text_access_hint"
                 android:layout_width="match_parent"

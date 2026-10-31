@@ -67,7 +67,10 @@ class MediaAdapter(
             }
         }
         holder.size.text = CompressionJob.formatSize(item.sizeBytes)
-        holder.itemView.setOnClickListener { onToggle(item) }
+        holder.itemView.setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
+            onToggle(item)
+        }
     }
 
     companion object {

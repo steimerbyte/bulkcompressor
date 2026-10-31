@@ -124,11 +124,41 @@ Zugriff ein.
 | Berechtigung | Wofür |
 |---|---|
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC` | Komprimierung läuft weiter, wenn die App im Hintergrund ist |
+| `WAKE_LOCK` | Der Lauf wird bei ausgeschaltetem Bildschirm nicht eingefroren |
 | `POST_NOTIFICATIONS` | Fortschrittsanzeige und Abbrechen-Knopf |
+| `WRITE_EXTERNAL_STORAGE` (**nur Android 7–9**, `maxSdkVersion=28`) | Logdatei im öffentlichen Download-Ordner; ab Android 10 erledigt das `MediaStore` ohne Berechtigung |
 | `MANAGE_EXTERNAL_STORAGE` | **optional** — nur für das Zurücksetzen des Dateizeitstempels; die App läuft vollständig ohne |
 
 Kein `INTERNET`. Die App kann nichts nach außen senden, auch nicht
 wollen.
+
+## Logdatei
+
+Jeder Lauf schreibt eine eigene Datei nach
+**`Download/BulkCompressor/bulkcompressor-JJJJMMDD-HHMMSS.log`** — über
+`MediaStore`, also ohne Berechtigung ab Android 10. Vor dem Start gibt es
+dort nichts; die Datei entsteht mit der ersten Zeile.
+
+* **Was drin steht:** Kopfzeile mit Version, Gerät, Android-Version, ABI,
+  Arbeitsspeicher und freiem Cache; jede Einstellung mit Zeitstempel;
+  pro Datei Auflösung, Codec (Hardware/Software), Bitrate, Dauer und
+  Einsparung; Meilensteine bei 10/25/50/75/100 % je Video inklusive
+  Geschwindigkeit gegenüber Echtzeit und Restzeit-Schätzung; Zähler für
+  Frames, Samples und Bytes; jeder übersprungene Eintrag **mit Grund**.
+* **Abstürze:** `CrashGuard` schreibt den Stacktrace nach
+  `Download/BulkCompressor/bulkcompressor-crash-JJJJMMDD-HHMMSS.log`
+  und zusätzlich in den app-privaten Speicher. Der Bericht enthält den
+  Vorlauf der letzten 2000 Logzeilen, Thread, PID, Speicher und den Pfad
+  der laufenden Logdatei.
+* **Aufbewahrung:** die letzten 12 Dateien bzw. 21 Tage; ältere werden
+  beim Start gelöscht. Eine Datei wird bei 8 MB fortgesetzt
+  (`-teil2.log`), damit keine Zeile verloren geht.
+* **Ohne Kabel:** dieselben Zeilen liegen im ausklappbaren Terminal der
+  App; **TEILEN** schickt sie als Text (inklusive Absturzbericht) an jede
+  Ziel-App.
+* **App-privat als Rückfallebene:** `files/logs/app.log` (512 KiB,
+  rotierend) — hieraus holt die App beim Start den Vorlauf, wenn der
+  Download-Ordner mal nicht beschreibbar ist.
 
 ## Technik
 
@@ -146,6 +176,14 @@ wollen.
 * **Abbruch** wirkt zwischen zwei Dateien und mitten im Video (der
   laufende Transcode wird beendet, die Zieldatei ist eine
   Cache-Temp-Datei und wird verworfen — das Original bleibt intakt).
+* **Klickgeräusche:** `SoundPool` mit drei kurzen WAV-Dateien (4–9 KB),
+  erzeugt von `tools/generate_click_sounds.py` — heller Klick für Chips,
+  Liste und Werkzeugleiste, tieferer für Schalter, größerer für
+  START. Beim Ziehen eines Sliders klickt jeder geänderte Schritt,
+  gedrosselt auf 25 pro Sekunde (`MIN_GAP_MS`), damit es nicht knattert.
+  Der Ton folgt zusätzlich der Systemeinstellung „Berührungsklänge":
+  ist die aus, bleibt die App still, egal was der Schalter in der App
+  sagt. Abschaltbar über die Zeile **KLICKGERÄUSCHE**.
 * Kein `ffmpeg`: die App ist ~2 MB groß statt ~60 MB, und die
   Hardware-Encoder des Geräts sind ohnehin schneller als libx264.
 

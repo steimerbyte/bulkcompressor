@@ -67,6 +67,18 @@ object MetaRestore {
     )
 
     /**
+     * Felder, die fuer ein Log ohne App-Kontext am meisten aussagen -
+     * Aufnahmezeitpunkt, Ort, Kamera. Nur fuer die Protokollzeile.
+     */
+    private val IMPORTANT_TAGS = listOf(
+        ExifInterface.TAG_DATETIME_ORIGINAL,
+        ExifInterface.TAG_GPS_LATITUDE,
+        ExifInterface.TAG_GPS_LONGITUDE,
+        ExifInterface.TAG_MAKE,
+        ExifInterface.TAG_MODEL
+    )
+
+    /**
      * Setzt den Aenderungszeitstempel der Zieldatei auf [millis].
      *
      * @return true nur, wenn der Wert danach tatsaechlich an der Datei
@@ -74,26 +86,49 @@ object MetaRestore {
      */
     fun applyTimestamp(resolver: ContentResolver, uri: Uri, millis: Long): Boolean {
         if (millis <= 0L) {
-            Log.d("Meta", "Zeitstempel uebersprungen: kein Wert vorhanden ($uri)")
+            Log.d(
+                "Meta",
+                "Zeitstempel uebersprungen: kein Wert vorhanden · $uri" +
+                    " · Quelle lieferte keine Aenderungszeit"
+            )
             return false
         }
         val path = filesystemPath(uri)
         if (path == null) {
-            Log.w("Meta", "Zeitstempel nicht setzbar: kein Dateipfad fuer $uri (Quelle: SAF-setLastModified)")
+            Log.w(
+                "Meta",
+                "Zeitstempel nicht setzbar: kein Dateipfad fuer $uri" +
+                    " · Grund SAF-URI ohne aufloesbaren Pfad (setLastModified braucht einen Pfad," +
+                    " COLUMN_LAST_MODIFIED ist schreibgeschuetzt)"
+            )
             return false
         }
         val file = File(path)
         val applied = runCatching { file.setLastModified(millis) }
         if (!applied.getOrDefault(false)) {
-            Log.w("Meta", "Zeitstempel: setLastModified fehlgeschlagen ($path)", applied.exceptionOrNull())
+            Log.w(
+                "Meta",
+                "Zeitstempel: setLastModified fehlgeschlagen ($path) · Zielzeit $millis ms" +
+                    " · Weg Dateipfad statt SAF",
+                applied.exceptionOrNull()
+            )
             return false
         }
         val actual = runCatching { file.lastModified() }.getOrDefault(0L)
         val ok = actual > 0L && kotlin.math.abs(actual - millis) <= 2_000L
         if (ok) {
-            Log.d("Meta", "Zeitstempel gesetzt: ${file.name} · $millis ms (Quelle: SAF-setLastModified)")
+            Log.d(
+                "Meta",
+                "Zeitstempel gesetzt: ${file.name} · $millis ms · Weg Dateipfad" +
+                    " (SAF kann das nicht) · gelesen $actual ms"
+            )
         } else {
-            Log.w("Meta", "Zeitstempel nicht uebernommen: ${file.name} · erwartet $millis, gelesen $actual")
+            Log.w(
+                "Meta",
+                "Zeitstempel nicht uebernommen: ${file.name} · erwartet $millis ms," +
+                    " gelesen $actual ms · Abweichung ${kotlin.math.abs(actual - millis)} ms" +
+                    " (Toleranz 2000 ms) · Pfad $path"
+            )
         }
         return ok
     }
@@ -128,7 +163,9 @@ object MetaRestore {
         if (!copy || !target.exists()) {
             Log.d(
                 "Meta",
-                "EXIF uebersprungen: " + if (!copy) "ausgeschaltet" else "Zieldatei fehlt ($target)"
+                "EXIF uebersprungen: " +
+                    (if (!copy) "ausgeschaltet" else "Zieldatei fehlt ($target)") +
+                    " · Quelle $source"
             )
             return false
         }
@@ -145,6 +182,10 @@ object MetaRestore {
         }
 
         var copiedTags = 0
+        val copiedNames = ArrayList<String>(COPIED_TAGS.size)
+        val missingImportant = ArrayList<String>(IMPORTANT_TAGS.size)
+        val failedTags = ArrayList<String>(4)
+        val keyValues = LinkedHashMap<String, String>(IMPORTANT_TAGS.size)
         descriptor.use { pfd ->
             val sourceExif = runCatching { ExifInterface(pfd.fileDescriptor) }.getOrNull()
             if (sourceExif == null) {
@@ -153,8 +194,52 @@ object MetaRestore {
             }
             for (tag in COPIED_TAGS) {
                 val value = runCatching { sourceExif.getAttribute(tag) }.getOrNull() ?: continue
-                if (runCatching { targetExif.setAttribute(tag, value) }.isSuccess) copiedTags++
+                if (runCatching { targetExif.setAttribute(tag, value) }.isSuccess) {
+                    copiedTags++
+                    copiedNames += tag
+                    if (tag in IMPORTANT_TAGS) keyValues[tag] = value
+                } else {
+                    failedTags += tag
+                }
             }
+            for (tag in IMPORTANT_TAGS) {
+                if (runCatching { sourceExif.getAttribute(tag) }.getOrNull().isNullOrEmpty()) {
+                    missingImportant += tag
+                }
+            }
+        }
+
+        if (copiedNames.isNotEmpty()) {
+            Log.d(
+                "Meta",
+                "EXIF kopiert: ${target.name} · $copiedTags von ${COPIED_TAGS.size} Feldern" +
+                    " · ${copiedNames.joinToString(",")}"
+            )
+        } else {
+            Log.d("Meta", "EXIF kopiert: ${target.name} · keine passenden Felder in der Quelle ($source)")
+        }
+        if (keyValues.isNotEmpty()) {
+            Log.d(
+                "Meta",
+                "EXIF Kernwerte: ${target.name} · " +
+                    keyValues.entries.joinToString(" · ") { (tag, value) ->
+                        "$tag=" + value.replace('\n', ' ').replace('\r', ' ')
+                    }
+            )
+        }
+        if (failedTags.isNotEmpty()) {
+            Log.w(
+                "Meta",
+                "EXIF teilweise nicht setzbar: ${target.name}" +
+                    " · ${failedTags.size} Felder abgelehnt: ${failedTags.joinToString(",")}"
+            )
+        }
+        if (missingImportant.isNotEmpty()) {
+            Log.d(
+                "Meta",
+                "EXIF nicht in der Quelle vorhanden: ${target.name}" +
+                    " · fehlt: ${missingImportant.joinToString(",")}"
+            )
         }
 
         // Die Drehung ist beim Neu-Encoding in die Pixel gerechnet worden,
@@ -165,7 +250,11 @@ object MetaRestore {
             Log.w("Meta", "EXIF nicht speicherbar: ${target.name}", saved.exceptionOrNull())
             return false
         }
-        Log.d("Meta", "EXIF zurueckgeschrieben: ${target.name} · $copiedTags Felder · Drehung normal")
+        Log.d(
+            "Meta",
+            "EXIF zurueckgeschrieben: ${target.name} · $copiedTags Felder · Drehung normal (1)" +
+                " · ${target.length()} B"
+        )
         return true
     }
 }

@@ -23,6 +23,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.steimerbyte.bulkcompressor.job.CompressionJob
 import com.steimerbyte.bulkcompressor.job.CompressionService
 import com.steimerbyte.bulkcompressor.job.JobBus
+import com.steimerbyte.bulkcompressor.log.DownloadsLog
 import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.log.LogLine
 import com.steimerbyte.bulkcompressor.model.CompressSettings
@@ -37,6 +38,7 @@ import com.steimerbyte.bulkcompressor.scan.SafScanner
 import com.steimerbyte.bulkcompressor.ui.ChipRow
 import com.steimerbyte.bulkcompressor.ui.MediaAdapter
 import com.steimerbyte.bulkcompressor.ui.SegmentBar
+import com.steimerbyte.bulkcompressor.ui.SoundKit
 import com.steimerbyte.bulkcompressor.ui.TerminalPanel
 
 class MainActivity : AppCompatActivity(), JobBus.Listener {
@@ -55,6 +57,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private lateinit var textHint: TextView
     private lateinit var markTimestamps: TextView
     private lateinit var markExif: TextView
+    private lateinit var markSound: TextView
     private lateinit var textAccessHint: TextView
     private lateinit var buttonAccess: Button
     private lateinit var groupProgress: LinearLayout
@@ -104,6 +107,16 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             }
         }
 
+    private val legacyStoragePermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            Log.i(
+                TAG,
+                if (granted) "Schreibrecht erteilt - Logdatei liegt in ${DownloadsLog.folderPath()}"
+                else "Ohne Schreibrecht bleibt die Logdatei im app-privaten Speicher"
+            )
+            if (granted) Log.retryDownloadLog(this)
+        }
+
     private val folderPicker =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri == null) return@registerForActivityResult
@@ -121,6 +134,10 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         prefs = getSharedPreferences(CompressSettings.PREFS, MODE_PRIVATE)
         settings = CompressSettings.load(prefs)
 
+        // Vor dem Aufbau: die Klickdateien sollen beim ersten Tippen
+        // schon dekodiert sein, sonst bleibt der erste Klick stumm.
+        SoundKit.init(this, settings.clickSounds)
+
         bindViews()
         setupChips()
         setupSliders()
@@ -130,12 +147,25 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         listMedia.layoutManager = LinearLayoutManager(this)
         listMedia.adapter = adapter
 
-        findViewById<Button>(R.id.button_pick).setOnClickListener { pickFolder() }
-        buttonStart.setOnClickListener { onStartClicked() }
-        buttonAccess.setOnClickListener { requestAllFilesAccess() }
-        buttonCancel.setOnClickListener { CompressionService.cancel(this) }
+        findViewById<Button>(R.id.button_pick).setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
+            pickFolder()
+        }
+        buttonStart.setOnClickListener {
+            SoundKit.play(SoundKit.Click.THUNK)
+            onStartClicked()
+        }
+        buttonAccess.setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
+            requestAllFilesAccess()
+        }
+        buttonCancel.setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
+            CompressionService.cancel(this)
+        }
 
         applySettingsToViews()
+        requestLegacyStoragePermission()
         restoreFolder()
     }
 
@@ -157,6 +187,9 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         // Nach dem Rueckweg aus den Einstellungen kann die Berechtigung
         // jetzt vorliegen - die Zeile verschwindet dann sofort.
         if (::buttonAccess.isInitialized) updateAccessRow()
+        // Die Systemeinstellung fuer Beruehrungsklaenge kann sich
+        // waehrend der Laufzeit geaendert haben.
+        SoundKit.refreshSystemSetting(this)
     }
 
     // ------------------------------------------------------------------
@@ -171,6 +204,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         textHint = findViewById(R.id.text_hint)
         markTimestamps = findViewById(R.id.mark_timestamps)
         markExif = findViewById(R.id.mark_exif)
+        markSound = findViewById(R.id.mark_sound)
         textAccessHint = findViewById(R.id.text_access_hint)
         buttonAccess = findViewById(R.id.button_access)
         groupProgress = findViewById(R.id.group_progress)
@@ -315,11 +349,22 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     private fun setupToggles() {
         findViewById<View>(R.id.row_timestamps).setOnClickListener {
+            SoundKit.play(SoundKit.Click.TOGGLE)
             settings = settings.copy(keepTimestamps = !settings.keepTimestamps)
             afterSettingsChanged()
         }
         findViewById<View>(R.id.row_exif).setOnClickListener {
+            SoundKit.play(SoundKit.Click.TOGGLE)
             settings = settings.copy(keepExif = !settings.keepExif)
+            afterSettingsChanged()
+        }
+        findViewById<View>(R.id.row_sound).setOnClickListener {
+            settings = settings.copy(clickSounds = !settings.clickSounds)
+            // Erst umschalten, dann klicken - beim Abschalten hoert man
+            // den Klick, mit dem man ihn abschaltet. Beim Einschalten
+            // kommt er, weil der Ton schon wieder frei ist.
+            SoundKit.setEnabled(settings.clickSounds)
+            SoundKit.play(SoundKit.Click.TOGGLE)
             afterSettingsChanged()
         }
     }
@@ -340,6 +385,21 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private fun afterSettingsChanged() {
         settings.save(prefs)
         renderValues()
+        Log.d(TAG, "Einstellung geaendert: ${describeSettings()}")
+    }
+
+    /** Die wirksame Konfiguration als eine Zeile - dieselbe Fassung wie in der Oberflaeche. */
+    private fun describeSettings(): String = buildString {
+        append("Videos ").append(settings.videoMode).append(" ").append(settings.bitratePercent).append(" %")
+        if (settings.videoShortEdge > 0) append(" ").append(settings.videoShortEdge).append("p")
+        append(" ").append(settings.codec)
+        append(" · Bilder Q").append(settings.imageQuality).append(' ')
+        append(if (settings.imageShortEdge > 0) "${settings.imageShortEdge}px" else "original")
+        append(' ').append(settings.imageFormat)
+        append(" · ").append(settings.outputMode)
+        append(" · Zeitstempel ").append(if (settings.keepTimestamps) "behalten" else "neu")
+        append(" · EXIF/GPS ").append(if (settings.keepExif) "behalten" else "verwerfen")
+        append(" · Klick ").append(if (settings.clickSounds) "an" else "aus")
     }
 
     private fun renderValues() {
@@ -347,6 +407,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         textQualityValue.text = settings.imageQuality.toString()
         renderToggle(markTimestamps, settings.keepTimestamps)
         renderToggle(markExif, settings.keepExif)
+        renderToggle(markSound, settings.clickSounds)
         textHint.setText(
             if (settings.outputMode == OutputMode.OVERWRITE) R.string.output_hint_overwrite
             else R.string.output_hint_keep
@@ -626,6 +687,19 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     // Lauf
     // ------------------------------------------------------------------
 
+    /**
+     * Android 7-9 haben kein MediaStore.Downloads: ohne
+     * WRITE_EXTERNAL_STORAGE liegt die Logdatei nur im app-privaten
+     * Speicher. Ab Android 10 ist der Aufruf wirkungslos.
+     */
+    private fun requestLegacyStoragePermission() {
+        if (Build.VERSION.SDK_INT >= 29) return
+        val permission = Manifest.permission.WRITE_EXTERNAL_STORAGE
+        if (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) return
+        Log.i(TAG, "Frage Schreibrecht fuer den Download-Ordner an (Android ${Build.VERSION.RELEASE})")
+        legacyStoragePermission.launch(permission)
+    }
+
     private fun onStartClicked() {
         val uri = treeUri
         if (uri == null) {
@@ -699,11 +773,19 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private class SimpleSeekListener(private val onChange: (Int) -> Unit) :
         SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-            if (fromUser) onChange(progress)
+            if (!fromUser) return
+            // Jeder Schritt klickt wie in Minecraft; SoundKit bremst
+            // schnell aufeinanderfolgende Wiederholungen von selbst.
+            SoundKit.play(SoundKit.Click.TICK)
+            onChange(progress)
         }
 
         override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
-        override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+
+        override fun onStopTrackingTouch(seekBar: SeekBar?) {
+            // Der letzte Schritt kann vom Bremsen verschluckt worden sein.
+            SoundKit.play(SoundKit.Click.TICK)
+        }
     }
 
     companion object {

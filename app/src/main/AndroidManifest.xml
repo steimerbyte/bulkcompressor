@@ -11,6 +11,25 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+        Der Kompressionslauf haelt einen PARTIAL_WAKE_LOCK, damit der
+        Prozess bei ausgeschaltetem Bildschirm nicht eingefroren wird.
+        Ohne diese Zeile wirft acquire() eine SecurityException und der
+        Dienst stirbt beim Start - der Fehler ist in 1.0.0 und 1.1.0
+        ausgeliefert worden. Normale Berechtigung, keine Nachfrage.
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!--
+        Nur Android 7-9: dort gibt es kein MediaStore.Downloads, in das man
+        ohne Berechtigung schreiben koennte. Die Logdatei liegt im
+        oeffentlichen Download-Ordner, damit sie ohne Kabel auf den Rechner
+        kommt. Ab Android 10 erledigt das MediaStore - die Berechtigung ist
+        deshalb auf maxSdkVersion 28 begrenzt und wird nur dort angefragt.
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <!--
         Nur fuer den Zeitstempel: Android bietet keine API, um den

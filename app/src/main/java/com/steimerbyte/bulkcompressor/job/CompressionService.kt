@@ -33,6 +33,9 @@ class CompressionService : Service(), JobBus.Listener {
     private var worker: Thread? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var lastNotificationUpdate = 0L
+    private var notificationUpdates = 0
+    private var runStartedAt = 0L
+    private var cancelRequestedAt = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -65,7 +68,15 @@ class CompressionService : Service(), JobBus.Listener {
                 launchWorker(Uri.parse(tree), docIds)
             }
             ACTION_CANCEL -> {
-                Log.i("Service", "Abbruch angefordert")
+                cancelRequestedAt = System.currentTimeMillis()
+                val runningSince = runStartedAt
+                Log.i(
+                    "Service",
+                    "Abbruch angefordert um $cancelRequestedAt" +
+                        (if (runningSince > 0) " · Auftrag lief da ${cancelRequestedAt - runningSince} ms"
+                        else " · kein Auftrag gestartet") +
+                        " · Worker ${if (worker?.isAlive == true) "laeuft" else "laeuft nicht"}"
+                )
                 cancelled.set(true)
                 if (worker?.isAlive == true) {
                     notify("Wird abgebrochen ...", null, 0, false)
@@ -82,16 +93,35 @@ class CompressionService : Service(), JobBus.Listener {
 
     private fun launchWorker(treeUri: Uri, docIds: List<String>) {
         cancelled.set(false)
+        runStartedAt = System.currentTimeMillis()
+        cancelRequestedAt = 0L
+        notificationUpdates = 0
         acquireWakeLock()
         val thread = Thread({
+            val threadName = Thread.currentThread().name
+            val threadId = Thread.currentThread().id
+            val workingStart = System.currentTimeMillis()
+            logRuntime("Worker-Start")
+            Log.i(
+                "Service",
+                "Worker: Thread $threadName (id $threadId) · Prioritaet ${Thread.currentThread().priority}" +
+                    " · Start um $workingStart · ${docIds.size} Dateien · $treeUri"
+            )
             try {
                 // Der Ordner wird erneut gelesen: damit stimmen Groesse,
                 // Zeitstempel und Ordnerzuordnung auch dann, wenn
                 // zwischendurch etwas geaendert wurde.
+                val scanStartedAt = System.currentTimeMillis()
                 val scan = SafScanner(contentResolver).scan(treeUri)
                 val wanted = docIds.toHashSet()
                 val items = scan.items.filter { it.docId in wanted }
-                Log.d("Service", "Scan: ${scan.items.size} Dateien in ${scan.folderCount} Ordnern")
+                Log.i(
+                    "Service",
+                    "Scan des Auftrags: ${scan.items.size} Dateien in ${scan.folderCount} Ordnern" +
+                        " in ${System.currentTimeMillis() - scanStartedAt} ms" +
+                        " · ${items.size} davon ausgewaehlt" +
+                        if (scan.truncated) " · Grenze erreicht" else ""
+                )
                 if (items.size != docIds.size) {
                     Log.w(
                         "Service",
@@ -101,20 +131,91 @@ class CompressionService : Service(), JobBus.Listener {
                 val settings = CompressSettings.load(
                     getSharedPreferences(CompressSettings.PREFS, MODE_PRIVATE)
                 )
+                Log.i(
+                    "Service",
+                    "Einstellungen geladen: ${settings.videoMode.name} ${settings.bitratePercent}%" +
+                        " · kurze Kante ${settings.videoShortEdge}px · Codec ${settings.codec.name}" +
+                        " · Bilder Q${settings.imageQuality} · ${settings.imageFormat.name}" +
+                        " · Ausgabe ${settings.outputMode.name}" +
+                        " · Zeitstempel ${if (settings.keepTimestamps) "behalten" else "verwerfen"}" +
+                        " · EXIF ${if (settings.keepExif) "behalten" else "verwerfen"}"
+                )
                 CompressionJob(applicationContext, treeUri, items, settings, cancelled).run()
             } catch (t: Throwable) {
                 JobBus.appendLog("ABBRUCH: ${t.message ?: t.javaClass.simpleName}")
-                Log.e("Service", "Lauf abgebrochen", t)
+                Log.e("Service", "Lauf abgebrochen nach ${System.currentTimeMillis() - workingStart} ms", t)
                 JobBus.publish(
                     JobBus.state.copy(running = false, finished = true, overall = 0f)
                 )
             } finally {
+                logRunEnd(
+                    threadName,
+                    workingStart,
+                    if (cancelled.get()) {
+                        "Abbruch, Wachhund freigegeben, Dienst beendet sich selbst (stopSelf)"
+                    } else {
+                        "Lauf abgeschlossen, Wachhund freigegeben, Dienst beendet sich selbst (stopSelf)"
+                    }
+                )
                 releaseWakeLock()
                 finishForeground()
             }
         }, "bulk-compress")
         worker = thread
         thread.start()
+        Log.i(
+            "Service",
+            "Worker-Thread gestartet: ${thread.name} (id ${thread.id}) · angefordert um $runStartedAt"
+        )
+    }
+
+    /** Speicher und Ausgabeort - einmal je Lauf, nicht je Datei. */
+    private fun logRuntime(stage: String) {
+        val runtime = Runtime.getRuntime()
+        val maxMb = runtime.maxMemory() / 1024 / 1024
+        val totalMb = runtime.totalMemory() / 1024 / 1024
+        val freeMb = runtime.freeMemory() / 1024 / 1024
+        val usedMb = totalMb - freeMb
+        Log.i(
+            "Service",
+            "$stage · Speicher: max $maxMb MB, belegt $usedMb MB von $totalMb MB, frei $freeMb MB"
+        )
+        runCatching {
+            val cacheDir = cacheDir
+            val usableMb = cacheDir.usableSpace / 1024 / 1024
+            val totalSpaceMb = cacheDir.totalSpace / 1024 / 1024
+            Log.i(
+                "Service",
+                "$stage · Ausgabeort/Arbeitsordner ${cacheDir.absolutePath}" +
+                    " · $usableMb MB frei von $totalSpaceMb MB" +
+                    " · Temp-Datei je Datei wird hier angelegt"
+            )
+        }.onFailure {
+            Log.w("Service", "$stage · freier Speicher des Arbeitsordners nicht ermittelbar", it)
+        }
+    }
+
+    /** Abschluss des Workers: Dauer, Abbruchgrund und warum der Dienst endet. */
+    private fun logRunEnd(threadName: String, workingStart: Long, reason: String) {
+        val now = System.currentTimeMillis()
+        val cancelledNow = cancelled.get()
+        val state = JobBus.state
+        val abortDetail = if (cancelRequestedAt > 0) {
+            "Abbruch angefordert vor ${now - cancelRequestedAt} ms"
+        } else {
+            "kein Abbruch angefordert"
+        }
+        Log.i(
+            "Service",
+            "Worker endet: Thread $threadName · Laufzeit ${now - workingStart} ms" +
+                " · Abbruch ${if (cancelledNow) "ja" else "nein"} · $abortDetail" +
+                " · ${state.done}/${state.total} Dateien" +
+                " · ${state.skipped} uebersprungen · ${state.failed} fehlgeschlagen" +
+                " · ${CompressionJob.formatSize(state.beforeBytes)} -> " +
+                "${CompressionJob.formatSize(state.afterBytes)}" +
+                " · ${notificationUpdates} Benachrichtigungs-Updates" +
+                " · Ende: $reason"
+        )
     }
 
     // ------------------------------------------------------------------
@@ -127,6 +228,15 @@ class CompressionService : Service(), JobBus.Listener {
         val progressChanged = (state.overall * 100).toInt()
         if (now - lastNotificationUpdate < 400 && progressChanged % 5 != 0) return
         lastNotificationUpdate = now
+        notificationUpdates++
+        if (notificationUpdates == 1) {
+            Log.i(
+                "Service",
+                "Benachrichtigung: Kadenz fruehestens alle 400 ms oder je 5% Fortschritt" +
+                    " · erstes Update bei ${progressChanged}% (${state.done}/${state.total} Dateien)" +
+                    " · Text \"${state.currentName.ifBlank { "Vorbereitung ..." }}\""
+            )
+        }
         notify(
             text = state.currentName.ifBlank { "Vorbereitung ..." },
             subText = "${state.done} / ${state.total}",
@@ -149,6 +259,11 @@ class CompressionService : Service(), JobBus.Listener {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+        Log.i(
+            "Service",
+            "Vordergrunddienst aktiv: Kennung $NOTIFICATION_ID · Typ " +
+                if (Build.VERSION.SDK_INT >= 29) "DATA_SYNC" else "ohne Typ (API < 29)"
+        )
     }
 
     private fun finishForeground() {
@@ -165,6 +280,12 @@ class CompressionService : Service(), JobBus.Listener {
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, notification)
         stopForeground(STOP_FOREGROUND_DETACH)
+        Log.i(
+            "Service",
+            "Vordergrunddienst beendet: Abschlussbenachrichtigung \"$summary\"" +
+                " · $notificationUpdates Fortschritts-Updates insgesamt" +
+                " · Dienst stoppt sich selbst (stopSelf)"
+        )
         stopSelf()
     }
 
@@ -252,11 +373,21 @@ class CompressionService : Service(), JobBus.Listener {
         try {
             lock.acquire(WAKE_LOCK_TIMEOUT_MS)
         } catch (t: Throwable) {
-            Log.w("Service", "Wachhund konnte nicht erworben werden", t)
-            throw t
+            // Ein fehlender Wachhund darf den Lauf nicht kosten: ohne ihn
+            // arbeitet der Dienst weiter, wird bei Bildschirmsperre aber
+            // moeglicherweise gedrosselt. Frueher flog die Ausnahme aus
+            // onStartCommand heraus und nahm den Prozess mit.
+            wakeLock = null
+            Log.e("Service", "Wachhund nicht verfuegbar - Lauf ohne Zeitgeber", t)
+            return
         }
         if (lock.isHeld) {
-            Log.d("Service", "Wachhund erworben (${WAKE_LOCK_TIMEOUT_MS / 60_000} min)")
+            Log.i(
+                "Service",
+                "Wachhund erworben: PARTIAL_WAKE_LOCK · Kennung bulkcompressor:job" +
+                    " · Zeitlimit ${WAKE_LOCK_TIMEOUT_MS / 60_000} min" +
+                    " (${WAKE_LOCK_TIMEOUT_MS} ms) · gehalten ja · Referenzzaehlung aus"
+            )
         } else {
             Log.w("Service", "Wachhund nach acquire nicht gehalten - Lauf kann einfrieren")
         }
@@ -272,11 +403,18 @@ class CompressionService : Service(), JobBus.Listener {
             return
         }
         runCatching { lock.release() }
+            .onSuccess { Log.i("Service", "Wachhund freigegeben · Kennung bulkcompressor:job · gehalten nein") }
             .onFailure { Log.w("Service", "Wachhund liess sich nicht freigeben", it) }
     }
 
     override fun onDestroy() {
-        Log.i("Service", "onDestroy")
+        Log.i(
+            "Service",
+            "onDestroy · Abbruch ${if (cancelled.get()) "gesetzt" else "nicht gesetzt"}" +
+                (if (runStartedAt > 0) " · Dienst lief ${System.currentTimeMillis() - runStartedAt} ms"
+                else " · keine Laufzeit erfasst") +
+                " · Worker ${if (worker?.isAlive == true) "noch aktiv" else "beendet"}"
+        )
         cancelled.set(true)
         JobBus.removeListener(this)
         releaseWakeLock()

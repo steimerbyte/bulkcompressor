@@ -61,7 +61,9 @@ data class CompressSettings(
     val imageFormat: ImageFormat = ImageFormat.KEEP,
     val outputMode: OutputMode = OutputMode.OVERWRITE,
     val keepTimestamps: Boolean = true,
-    val keepExif: Boolean = true
+    val keepExif: Boolean = true,
+    /** Klickgeraeusche bei Knoepfen, Schaltern und Slidern. */
+    val clickSounds: Boolean = true
 ) {
     fun save(prefs: android.content.SharedPreferences) {
         prefs.edit()
@@ -75,6 +77,7 @@ data class CompressSettings(
             .putString("output_mode", outputMode.name)
             .putBoolean("keep_timestamps", keepTimestamps)
             .putBoolean("keep_exif", keepExif)
+            .putBoolean("click_sounds", clickSounds)
             .apply()
     }
 
@@ -95,7 +98,8 @@ data class CompressSettings(
                 imageFormat = enum(prefs.getString("image_format", null), ImageFormat.entries.toTypedArray(), d.imageFormat),
                 outputMode = enum(prefs.getString("output_mode", null), OutputMode.entries.toTypedArray(), d.outputMode),
                 keepTimestamps = prefs.getBoolean("keep_timestamps", d.keepTimestamps),
-                keepExif = prefs.getBoolean("keep_exif", d.keepExif)
+                keepExif = prefs.getBoolean("keep_exif", d.keepExif),
+                clickSounds = prefs.getBoolean("click_sounds", d.clickSounds)
             )
         }
     }

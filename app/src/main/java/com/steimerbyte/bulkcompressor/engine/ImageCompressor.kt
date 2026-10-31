@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
+import android.provider.OpenableColumns
 import androidx.exifinterface.media.ExifInterface
 import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.model.CompressSettings
@@ -78,6 +79,12 @@ class ImageCompressor(private val context: Context) {
             val desiredShortEdge =
                 if (settings.imageShortEdge <= 0) minOf(srcWidth, srcHeight) else settings.imageShortEdge
             val sample = chooseSampleSize(srcWidth, srcHeight, desiredShortEdge)
+            val budgetMb = Runtime.getRuntime().maxMemory() / 6 / (1024 * 1024)
+            Log.d(
+                "Image",
+                "$name · Ziel-Kurzkante ${desiredShortEdge}px · inSampleSize=$sample" +
+                    " · Speicherbudget $budgetMb MB (maxMemory/6)"
+            )
 
             val options = BitmapFactory.Options().apply {
                 inSampleSize = sample
@@ -90,10 +97,46 @@ class ImageCompressor(private val context: Context) {
                 throw IOException("Nicht genug Arbeitsspeicher fuer dieses Bild")
             } ?: throw IOException("Bild nicht dekodierbar")
 
+            val decodedWidth = decoded.width
+            val decodedHeight = decoded.height
+            val decodedBytes = decodedWidth.toLong() * decodedHeight * 4
+            Log.d(
+                "Image",
+                "$name · dekodiert ${decodedWidth}x$decodedHeight nach inSampleSize=$sample" +
+                    " · Bitmap ${mb(decodedBytes)} im Speicher"
+            )
+
             var current: Bitmap = decoded
             try {
-                current = rotate(current, readOrientation(source))
+                val orientation = readOrientation(source)
+                val degrees = OrientationUtil.rotationDegrees(orientation)
+                val flipped = OrientationUtil.flipHorizontal(orientation)
+                val orientationText = if (degrees == 0 && !flipped) {
+                    "keine Drehung noetig"
+                } else {
+                    "Drehung um $degrees Grad" + if (flipped) " · zusaetzlich gespiegelt" else ""
+                }
+                Log.d("Image", "$name · EXIF-Orientierung $orientation · $orientationText")
+
+                current = rotate(current, orientation)
                 current = downscale(current, desiredShortEdge)
+
+                val outWidth = current.width
+                val outHeight = current.height
+                val sourceArea = srcWidth.toLong() * srcHeight
+                val areaPercent = if (sourceArea > 0) {
+                    outWidth.toLong() * outHeight * 100 / sourceArea
+                } else {
+                    0L
+                }
+                Log.d(
+                    "Image",
+                    "$name · Bild ${decodedWidth}x$decodedHeight -> ${outWidth}x$outHeight" +
+                        " (Drehung und Skalierung)" +
+                        " · Ziel-Kurzkante ${desiredShortEdge}px" +
+                        " · tatsaechliche Kurzkante ${minOf(outWidth, outHeight)}px" +
+                        " · Flaeche $areaPercent % der Quelle"
+                )
 
                 val format = resolveFormat(settings, sourceExtension)
                 FileOutputStream(target).use { out ->
@@ -101,11 +144,27 @@ class ImageCompressor(private val context: Context) {
                         throw IOException("Bild konnte nicht geschrieben werden")
                     }
                 }
+                val targetBytes = target.length()
+                if (targetBytes <= 0L) {
+                    Log.e(
+                        "Image",
+                        "$name · Zieldatei ist leer (0 B): ${target.absolutePath}" +
+                            " · ${format.kind} · q${settings.imageQuality} · inSampleSize=$sample"
+                    )
+                }
+                val sourceBytes = querySourceBytes(source)
+                val sizeText = if (sourceBytes > 0L) {
+                    "$sourceBytes B -> $targetBytes B" +
+                        " · Ersparnis ${(sourceBytes - targetBytes) * 100 / sourceBytes} %"
+                } else {
+                    "$targetBytes B · Ersparnis unbekannt (Quellgroesse nicht lesbar)"
+                }
                 Log.i(
                     "Image",
                     "$name · ${srcWidth}x${srcHeight} -> ${current.width}x${current.height}" +
                         " · ${format.kind} · q${settings.imageQuality} · inSampleSize=$sample" +
-                        " · ${target.length()} B · ${System.currentTimeMillis() - startedAt} ms"
+                        " · $sizeText" +
+                        " · ${System.currentTimeMillis() - startedAt} ms"
                 )
                 return Result(current.width, current.height, format)
             } finally {
@@ -174,4 +233,32 @@ class ImageCompressor(private val context: Context) {
 
     private fun openStream(source: Uri): InputStream =
         context.contentResolver.openInputStream(source) ?: throw IOException("Quelle nicht lesbar")
+
+    /**
+     * Groesse in MB mit einer Nachkommastelle. Ganzzahlig gerechnet statt
+     * ueber String.format, damit die Ausgabe unabhaengig von der
+     * Geraeteeinstellung immer ein Komma als Trenner hat.
+     */
+    private fun mb(bytes: Long): String {
+        val whole = bytes / (1024 * 1024)
+        val tenths = bytes % (1024 * 1024) * 10 / (1024 * 1024)
+        return "$whole,$tenths MB"
+    }
+
+    /**
+     * Quellgroesse laut Provider, nur zum Protokollieren. Liefert 0,
+     * wenn der Provider die Spalte nicht kennt - die Zeile nennt die
+     * Ersparnis dann "unbekannt" statt eine Zahl zu erfinden.
+     */
+    private fun querySourceBytes(source: Uri): Long = runCatching {
+        context.contentResolver.query(source, arrayOf(OpenableColumns.SIZE), null, null, null)
+            ?.use { cursor ->
+                val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (index < 0 || !cursor.moveToFirst() || cursor.isNull(index)) {
+                    0L
+                } else {
+                    cursor.getLong(index)
+                }
+            } ?: 0L
+    }.getOrDefault(0L)
 }

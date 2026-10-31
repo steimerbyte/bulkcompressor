@@ -9,6 +9,7 @@ import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.model.MediaItem
 import com.steimerbyte.bulkcompressor.model.MediaKind
 import com.steimerbyte.bulkcompressor.model.ScanResult
+import java.util.Locale
 
 /**
  * Durchsucht den vom Benutzer gewaehlten SAF-Ordner.
@@ -35,8 +36,16 @@ class SafScanner(private val resolver: ContentResolver) {
         val queue = ArrayDeque<String>()
         queue.add(rootId)
         val visited = HashSet<String>()
+        val folderNames = HashMap<String, String>()
+        folderNames[rootId] = readableFolderName(rootId)
+        val startedAt = System.currentTimeMillis()
         var folders = 0
         var skipped = 0
+        var skippedNoType = 0
+        var skippedZeroBytes = 0
+        var entriesWithoutMime = 0
+        var unreadableFolders = 0
+        var foldersOverLimit = 0
         var truncated = false
 
         while (queue.isNotEmpty()) {
@@ -47,12 +56,25 @@ class SafScanner(private val resolver: ContentResolver) {
             val folderId = queue.removeFirst()
             if (!visited.add(folderId)) continue
             folders++
+            val folderStartedAt = System.currentTimeMillis()
+            var folderVideos = 0
+            var folderImages = 0
+            var folderBytes = 0L
+            var folderNoType = 0
+            var folderNoMime = 0
+            var folderZeroBytes = 0
 
-            val children = queryChildren(treeUri, folderId)
+            val children = queryChildren(treeUri, folderId) { unreadableFolders++ }
             for (child in children) {
                 if (child.isDirectory) {
-                    if (queue.size + visited.size < MAX_FOLDERS) queue.add(child.documentId)
+                    folderNames[child.documentId] = child.name
+                    if (queue.size + visited.size < MAX_FOLDERS) {
+                        queue.add(child.documentId)
+                    } else {
+                        foldersOverLimit++
+                    }
                 } else {
+                    if (child.mime.isBlank()) folderNoMime++
                     val extension = Naming.extensionOf(child.name)
                     val kind = when {
                         Naming.isVideo(extension) -> MediaKind.VIDEO
@@ -61,10 +83,14 @@ class SafScanner(private val resolver: ContentResolver) {
                     }
                     if (kind == null) {
                         skipped++
+                        skippedNoType++
+                        folderNoType++
                         continue
                     }
                     if (child.size <= 0) {
                         skipped++
+                        skippedZeroBytes++
+                        folderZeroBytes++
                         continue
                     }
                     if (items.size >= MAX_FILES) {
@@ -83,18 +109,37 @@ class SafScanner(private val resolver: ContentResolver) {
                             kind = kind
                         )
                     )
+                    if (kind == MediaKind.VIDEO) folderVideos++ else folderImages++
+                    folderBytes += child.size
                 }
             }
+            entriesWithoutMime += folderNoMime
+            Log.i(
+                "Scan",
+                "Ordner $folders: ${folderNames[folderId] ?: folderId} · $folderVideos Videos" +
+                    " · $folderImages Bilder · ${folderBytes} B (${mb(folderBytes)} MB)" +
+                    " · $folderNoType uebersprungen ohne Medien-Typ" +
+                    " · $folderZeroBytes uebersprungen wegen 0 B" +
+                    " · $folderNoMime Eintraege ohne MIME" +
+                    " · ${System.currentTimeMillis() - folderStartedAt} ms"
+            )
             onProgress(Progress(folders, items.size))
         }
 
+        val elapsed = System.currentTimeMillis() - startedAt
         items.sortWith(compareBy({ it.kind }, { it.displayName.lowercase() }))
         val videos = items.count { it.kind == MediaKind.VIDEO }
         val bytes = items.sumOf { it.sizeBytes }
         Log.i(
             "Scan",
             "Fertig: $folders Ordner · $videos Videos · ${items.size - videos} Bilder · $bytes B" +
+                " (${mb(bytes)} MB)" +
                 " · $skipped uebersprungen" +
+                " (davon $skippedNoType ohne Medien-Typ, $skippedZeroBytes mit 0 B," +
+                " $entriesWithoutMime ohne MIME)" +
+                " · $unreadableFolders Ordner nicht lesbar" +
+                " · $foldersOverLimit Unterordner wegen der Ordnergrenze nicht gelesen" +
+                " · $elapsed ms Laufzeit" +
                 if (truncated) " · durch Grenze abgeschnitten" else ""
         )
         if (truncated) {
@@ -106,6 +151,19 @@ class SafScanner(private val resolver: ContentResolver) {
         return ScanResult(items, folders, truncated, skipped)
     }
 
+    /** Bytes als MB-Text mit einer Nachkommastelle, deutsch geschrieben. */
+    private fun mb(bytes: Long): String =
+        String.format(Locale.GERMANY, "%.1f", bytes / 1024.0 / 1024.0)
+
+    /**
+     * Lesbarer Name des Wurzelordners. Der Dokument-ID fehlt der Anzeigename,
+     * deshalb bleibt es beim Pfadanteil hinter dem Doppelpunkt.
+     */
+    private fun readableFolderName(documentId: String): String {
+        val path = documentId.substringAfter(':', documentId)
+        return path.ifBlank { documentId }
+    }
+
     private data class Child(
         val documentId: String,
         val name: String,
@@ -115,7 +173,11 @@ class SafScanner(private val resolver: ContentResolver) {
         val isDirectory: Boolean
     )
 
-    private fun queryChildren(treeUri: Uri, folderId: String): List<Child> {
+    private fun queryChildren(
+        treeUri: Uri,
+        folderId: String,
+        onUnreadable: () -> Unit = {}
+    ): List<Child> {
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, folderId)
         val projection = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
@@ -130,6 +192,7 @@ class SafScanner(private val resolver: ContentResolver) {
         try {
             val query = resolver.query(childrenUri, projection, null, null, null)
             if (query == null) {
+                onUnreadable()
                 Log.w("Scan", "Ordner nicht lesbar (kein Cursor): $folderId")
                 return result
             }
@@ -139,11 +202,19 @@ class SafScanner(private val resolver: ContentResolver) {
             val mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
             val sizeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
             val modifiedIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
-            if (idIndex < 0 || nameIndex < 0) return result
+            if (idIndex < 0 || nameIndex < 0) {
+                onUnreadable()
+                return result
+            }
 
+            var rowSkipped = 0
             while (cursor.moveToNext()) {
-                val id = cursor.getString(idIndex) ?: continue
-                val name = cursor.getString(nameIndex) ?: continue
+                val id = cursor.getString(idIndex)
+                val name = cursor.getString(nameIndex)
+                if (id == null || name == null) {
+                    rowSkipped++
+                    continue
+                }
                 val mime = if (mimeIndex >= 0) cursor.getString(mimeIndex) ?: "" else ""
                 result.add(
                     Child(
@@ -158,9 +229,16 @@ class SafScanner(private val resolver: ContentResolver) {
                     )
                 )
             }
+            if (rowSkipped > 0) {
+                Log.w(
+                    "Scan",
+                    "Ordner $folderId: $rowSkipped Eintraege ohne Dokument-ID oder Namen uebersprungen"
+                )
+            }
         } catch (t: Throwable) {
             // Ein nicht lesbarer Unterordner darf den ganzen Lauf nicht
             // verhindern (z. B. geloeschter Ordner oder fehlende Rechte).
+            onUnreadable()
             Log.w("Scan", "Ordner nicht lesbar: $folderId", t)
         } finally {
             cursor?.close()

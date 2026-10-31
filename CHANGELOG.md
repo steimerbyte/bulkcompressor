@@ -4,6 +4,60 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.2.0] – 2026-10-31
+
+### Hinzugefügt
+- **Klickgeräusche** im Minecraft-Stil: kurzer Holz-Klick bei Chips,
+  Listenzeilen, Schaltern, Werkzeugleiste und Knoepfen, ein groesserer
+  beim Start. Slider klicken pro geaendertem Schritt, gedrosselt auf 25
+  pro Sekunde. Drei synthetisch erzeugte WAV-Dateien (4–9 KB,
+  `tools/generate_click_sounds.py`), abgespielt über `SoundPool`.
+  Abschaltbar über die neue Zeile **KLICKGERÄUSCHE**; der Ton folgt
+  zusaetzlich der Systemeinstellung "Beruehrungsklaenge".
+- **Logdatei im Download-Ordner**: jede Sitzung schreibt nach
+  `Download/BulkCompressor/bulkcompressor-JJJJMMDD-HHMMSS.log`, ab
+  Android 10 über `MediaStore` ohne Berechtigung, auf Android 7–9 mit
+  `WRITE_EXTERNAL_STORAGE` (auf `maxSdkVersion=28` begrenzt). Kein Kabel,
+  kein adb: Datei im Download-Ordner öffnen und hochladen.
+- **Fortsetzung statt Ende**: ab 8 MB beginnt `-teil2.log` derselben
+  Sitzung; die letzten 12 Dateien bzw. 21 Tage bleiben liegen, ältere
+  werden beim Start gelöscht.
+- **Sitzungskopf** in der Datei: Version, Gerät, Android-Version, ABI,
+  Arbeitsspeicher, freier Cache, Pfad der internen Datei.
+- **Absturzbericht auch als Download**: `bulkcompressor-crash-*.log` mit
+  Thread, PID, Speicher, ABI, Logpfad, **2000** Zeilen Vorlauf und
+  vollständigem Stacktrace. Der Bericht der Vorsitzung wird beim nächsten
+  Start zusätzlich in die neue Sitzungsdatei gehängt.
+- **Deutlich ausführlicheres Protokoll** in Engine, Lauf und Dienst:
+  Spurübersicht und Encoder-Auswahl (Name, Hardware/Software,
+  `maxInstances`), Encoder-Format mit Profil/Level, Zähler für Samples,
+  Frames, Bytes und Stall-Runden, Fortschrittsmeilensteine mit
+  Geschwindigkeit gegenüber Echtzeit und Restzeit-Schätzung, Tonpfad
+  (durchgereicht oder neu kodiert) mit Format und Zählerständen,
+  Bildschritte (EXIF-Orientierung, `inSampleSize`, Skalierungsfaktor,
+  Ersparnis), Metadaten-Kopie mit Feldnamen und Ergebnis, je Datei
+  Aktion und Grund bei Überspringen, alle 10 Dateien eine
+  Verdichtungszeile mit Durchsatz und Restzeit.
+- **Terminal** meldet den Pfad der Download-Datei und warnt einmal, wenn
+  dort nicht geschrieben werden kann.
+
+### Behoben
+- **Absturz beim ersten Lauf**: `WAKE_LOCK` fehlte im Manifest. Der
+  Dienst holte beim Start einen `PARTIAL_WAKE_LOCK`, bekam eine
+  `SecurityException` und starb – in 1.0.0 und 1.1.0. Die Berechtigung
+  ist jetzt deklariert.
+- **Fehlender Wachhund kostet den Lauf nicht mehr**: `acquire()` fängt
+  jeden Fehler ab und protokolliert ihn. Vorher flog die Ausnahme aus
+  `onStartCommand` heraus und nahm den Prozess mit; jetzt läuft der
+  Auftrag ohne Zeitgeber weiter.
+- `ManifestPermissionsTest` prüft am zusammengeführten Manifest, dass
+  `WAKE_LOCK` und `FOREGROUND_SERVICE_DATA_SYNC` deklariert sind und der
+  Dienst `foregroundServiceType="dataSync"` trägt.
+
+### Geändert
+- `versionCode` 4, `versionName` 1.2.0. 1.1.1 wurde nie einzeln
+  veröffentlicht — was hier steht, ist der Sprung von 1.1.0 auf 1.2.0.
+
 ## [1.1.0] – 2026-10-31
 
 ### Hinzugefügt

@@ -16,12 +16,15 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Zentrale Log-Fassade der App.
  *
- * Drei Senken, alle muessen mit derselben Reihenfolge arbeiten:
+ * Vier Senken, alle in derselben Reihenfolge:
  *  1. Ringpuffer (sofort, im Aufrufer-Thread) - Vorrat fuer das
  *     Terminal-Panel und fuer den Absturzbericht.
- *  2. Datei (ueber genau einen Daemon-Thread) - damit ein langsamer
- *     Speicher nie den Kompressor blockiert.
- *  3. `android.util.Log` (sofort) - fuer `adb logcat` mit demselben Tag.
+ *  2. App-private Datei (ueber genau einen Daemon-Thread) - damit ein
+ *     langsamer Speicher nie den Kompressor blockiert; hieraus wird beim
+ *     Start der Vorlauf der letzten Sitzung gelesen.
+ *  3. Logdatei im oeffentlichen Download-Ordner ([DownloadsLog]) - damit
+ *     der Nutzer sie ohne Kabel auf den Rechner holen kann.
+ *  4. `android.util.Log` (sofort) - fuer `adb logcat` mit demselben Tag.
  *
  * Keine oeffentliche Methode wirft: intern laeuft alles in `runCatching`.
  * Ein fehlgeschlagener Logschreibvorgang darf keinen Kompressionslauf
@@ -35,12 +38,25 @@ object Log {
     /** So viele Zeilen der letzten Sitzung wandern beim Start in den Ring. */
     private const val CARRY_OVER_LINES = 200
 
+    private const val TAG_APP = "App"
+
+    /** So oft wird die Download-Datei gespult. */
+    private const val FLUSH_INTERVAL_MS = 700L
+
     private const val SESSION_TAG = "Session"
     private const val SESSION_LINE = "---- Sitzung gestartet ----"
     private const val TERMINAL_TITLE = "=== Bulk Compressor Log ==="
 
     /** So viele Zeichen des Absturzberichts gehen in den Export. */
     private const val CRASH_EXPORT_LIMIT = 64_000
+
+    /**
+     * So viele Zeilen warten hoechstens auf die Eroeffnung der
+     * Download-Datei. Der erste Start legt sie auf einem Hintergrund-Thread
+     * an; bis dahin darf der Ringpuffer nicht als Puffer herhalten, weil er
+     * laengst uebergelaufen waere.
+     */
+    private const val EXTERNAL_PENDING_LIMIT = 4000
 
     /** Serialisiert Reihenfolge: Ring, Dateiauftrag und Listener-Zustellung. */
     private val gate = Any()
@@ -69,6 +85,17 @@ object Log {
 
     @Volatile
     private var file: LogFile? = null
+
+    /** Logdatei im Download-Ordner; null, solange sie nicht offen ist. */
+    @Volatile
+    private var external: DownloadsLog.Session? = null
+
+    /** true, sobald der Eroeffnungsversuch gelaufen ist (auch bei Fehlschlag). */
+    @Volatile
+    private var externalResolved = false
+
+    /** Zeilen, die vor dem Oeffnen der Download-Datei entstanden sind. */
+    private val externalPending = ArrayDeque<String>()
 
     @Volatile
     private var writer: ExecutorService? = null
@@ -136,7 +163,102 @@ object Log {
             )
         }
 
+        // Download-Datei auf dem Schreibthread eroeffnen: MediaStore-Eintrag
+        // und Verzeichnisanlage sollen den Start nicht bremsen. Der Auftrag
+        // steht VOR der ersten emittierten Zeile in der Warteschlange,
+        // damit die Reihenfolge in der Datei stimmt.
+        writer?.execute { openExternal(app) }
+        startFlusher()
+
+        logEnvironment(app)
         emit(LogLevel.I, SESSION_TAG, SESSION_LINE)
+    }
+
+    /**
+     * Kopfzeile einer Sitzung. Ohne diese Angaben laesst sich eine
+     * zugeschickte Logdatei keinem Geraet und keiner Version zuordnen.
+     */
+    private fun logEnvironment(app: Context) {
+        val runtime = Runtime.getRuntime()
+        val maxMb = runtime.maxMemory() / (1024 * 1024)
+        val freeMb = runtime.freeMemory() / (1024 * 1024)
+        val cacheMb = runCatching { app.cacheDir.usableSpace / (1024 * 1024) }.getOrDefault(0L)
+        emit(
+            LogLevel.I,
+            TAG_APP,
+            "Version $appVersion · Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})" +
+                " · ${Build.MANUFACTURER} ${Build.MODEL} · ${Build.SUPPORTED_ABIS.firstOrNull() ?: "?"}"
+        )
+        emit(
+            LogLevel.I,
+            TAG_APP,
+            "Speicher max ${maxMb} MB · frei ${freeMb} MB · Cache frei ${cacheMb} MB" +
+                " · private Logdatei: ${runCatching { file?.current()?.absolutePath }.getOrNull() ?: "keine"}"
+        )
+        emit(LogLevel.I, TAG_APP, "Interne Datei: ${runCatching { file?.current()?.name }.getOrNull() ?: "keine"}")
+    }
+
+    /**
+     * Oeffnet die Logdatei im Download-Ordner und schreibt die Zeilen nach,
+     * die bis dahin angefallen sind. Laeuft auf dem Schreibthread.
+     */
+    private fun openExternal(app: Context) {
+        val session = runCatching { DownloadsLog.open(app) }.getOrNull()
+        val pending: List<String>
+        synchronized(gate) {
+            external = session
+            externalResolved = true
+            pending = externalPending.toList()
+            externalPending.clear()
+        }
+        if (session == null) {
+            // Kein Download-Ordner (alte Android-Version ohne Berechtigung):
+            // einmal melden, nicht pro Zeile. Der Rest laeuft weiter.
+            emit(
+                LogLevel.W,
+                TAG_APP,
+                "Keine Logdatei in ${DownloadsLog.folderPath()} - nur app-privater Speicher. " +
+                    "Teilen im Terminal liefert denselben Text."
+            )
+            return
+        }
+        runCatching {
+            for (text in pending) session.append(text)
+            appendCarriedCrash(session)
+        }
+        emit(LogLevel.I, TAG_APP, "Logdatei: ${session.path ?: "unbekannt"}")
+    }
+
+    /**
+     * Der Absturz der vorigen Sitzung steckt nur in `crash.log`. Er gehoert
+     * in die Datei, die der Nutzer vom Geraet holt.
+     */
+    private fun appendCarriedCrash(session: DownloadsLog.Session) {
+        val crash = runCatching { file?.crashFile() }.getOrNull() ?: return
+        if (!crash.isFile || crash.length() == 0L) return
+        val text = runCatching { crash.readText() }.getOrNull()?.takeIf { it.isNotBlank() } ?: return
+        session.append(
+            "\n=== Absturzbericht der vorigen Sitzung (crash.log) ===\n" +
+                if (text.length > CRASH_EXPORT_LIMIT) text.takeLast(CRASH_EXPORT_LIMIT) else text
+        )
+        if (!text.endsWith('\n')) session.append("\n")
+    }
+
+    /** Spuelt die Download-Datei regelmaessig; ein Puffer darf nie stehen bleiben. */
+    private fun startFlusher() {
+        Thread({
+            while (true) {
+                try {
+                    Thread.sleep(FLUSH_INTERVAL_MS)
+                } catch (interrupted: InterruptedException) {
+                    return@Thread
+                }
+                runCatching { external?.flush() }
+            }
+        }, "log-flush").apply {
+            isDaemon = true
+            priority = Thread.MIN_PRIORITY
+        }.start()
     }
 
     /**
@@ -204,6 +326,11 @@ object Log {
             append("Geraet: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n')
             append("Android: ").append(Build.VERSION.RELEASE)
                 .append(" (SDK ").append(Build.VERSION.SDK_INT).append(")\n")
+            external?.path?.let { append("Logdatei: ").append(it).append('\n') }
+            file?.let { internalFile ->
+                append("Interne Datei: ").append(runCatching { internalFile.current().absolutePath }.getOrDefault("?"))
+                    .append('\n')
+            }
             append('\n')
             for (line in ring.snapshot(RING_CAPACITY)) append(line.format()).append('\n')
             appendCrashSection(this)
@@ -230,6 +357,28 @@ object Log {
     }
 
     fun appLogFile(): File? = runCatching { file?.current() }.getOrNull()
+
+    /** Logdatei im Download-Ordner; null, wenn dort nichts schreibbar ist. */
+    fun downloadLogPath(): String? = external?.path
+
+    /**
+     * Zweiter Versuch fuer die Download-Datei, nachdem der Nutzer das
+     * Schreibrecht erteilt hat. Der erste Versuch lief beim Start und
+     * konnte scheitern, weil die Berechtigung noch fehlte.
+     */
+    fun retryDownloadLog(context: Context) {
+        val app = context.applicationContext ?: context
+        val executor = writer ?: return
+        synchronized(gate) {
+            external = null
+            externalResolved = false
+            externalPending.clear()
+        }
+        executor.execute { openExternal(app) }
+    }
+
+    /** Alle Dateien der laufenden Sitzung, in Reihenfolge. */
+    fun downloadLogPaths(): List<String> = runCatching { external?.paths }.getOrNull() ?: emptyList()
 
     fun crashLogFile(): File? = runCatching { file?.crashFile() }.getOrNull()
 
@@ -279,12 +428,33 @@ object Log {
             ring.add(entry)
             // Datei-I/O nie im Aufrufer: ein Auftrag pro Zeile, abgearbeitet
             // in genau der Reihenfolge, in der er eingereiht wurde.
-            writer?.execute { runCatching { file?.append(listOf(entry)) } }
+            writer?.execute {
+                runCatching { file?.append(listOf(entry)) }
+                appendExternal(entry)
+            }
             if (handler != null) handler.post { deliver(entry) }
             entry
         }
         // Ohne Looper (JVM-Test, sehr frueher Aufruf) direkt zustellen.
         if (handler == null) deliver(line)
+    }
+
+    /**
+     * Schreibt eine Zeile in die Download-Datei. Solange sie noch nicht
+     * offen ist, wird gepuffert; ist sie gar nicht zu oeffnen, wird nichts
+     * mehr gesammelt (sonst waechst der Puffer ohne Abnehmer).
+     */
+    private fun appendExternal(entry: LogLine) {
+        val session = external
+        if (session != null) {
+            session.append(entry.format() + "\n")
+            return
+        }
+        if (externalResolved) return
+        synchronized(gate) {
+            if (externalPending.size >= EXTERNAL_PENDING_LIMIT) externalPending.removeFirst()
+            externalPending.addLast(entry.format() + "\n")
+        }
     }
 
     private fun deliver(line: LogLine) {

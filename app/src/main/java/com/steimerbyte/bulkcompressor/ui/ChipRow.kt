@@ -73,6 +73,7 @@ class ChipRow(
                 isClickable = true
                 isFocusable = true
                 setOnClickListener {
+                    SoundKit.play(SoundKit.Click.TICK)
                     setSelected(index, notify = true)
                     // Der Kontrast allein reicht nicht: Screenreader bekommen
                     // die neue Auswahl als Ansage statt als reine Farbaenderung.

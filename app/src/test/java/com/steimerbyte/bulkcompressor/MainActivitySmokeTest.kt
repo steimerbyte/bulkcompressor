@@ -1,6 +1,7 @@
 package com.steimerbyte.bulkcompressor
 
 import android.os.Looper
+import android.view.View
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
@@ -144,5 +145,30 @@ class MainActivitySmokeTest {
         assertTrue(text.contains("=== Bulk Compressor Log ==="))
         assertTrue(text.contains("export-probe"))
         assertNotNull(Log.crashLogFile())
+    }
+
+    @Test
+    fun `tippen auf schalter chip und slider bleibt ohne absturz`() {
+        val activity = activity()
+
+        // Jede dieser Beruehrungen spielt einen Klick. Fehlt der
+        // SoundPool oder ist die Verdrahtung falsch, faellt es hier auf --
+        // auf dem Geraet waere es nur ein fehlender Ton.
+        activity.findViewById<View>(R.id.row_timestamps).performClick()
+        activity.findViewById<View>(R.id.row_exif).performClick()
+        activity.findViewById<View>(R.id.row_sound).performClick()
+        activity.findViewById<View>(R.id.row_sound).performClick()
+
+        val modeChips = activity.findViewById<LinearLayout>(R.id.chip_row_mode)
+        modeChips.getChildAt(1).performClick()
+
+        val seek = activity.findViewById<SeekBar>(R.id.seek_bitrate)
+        shadowOf(seek).onSeekBarChangeListener?.onProgressChanged(seek, 40, true)
+        shadowOf(seek).onSeekBarChangeListener?.onStopTrackingTouch(seek)
+
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val markSound = activity.findViewById<TextView>(R.id.mark_sound)
+        assertNotNull("Schalter fuer Klickgeraeusche fehlt im Layout", markSound)
     }
 }

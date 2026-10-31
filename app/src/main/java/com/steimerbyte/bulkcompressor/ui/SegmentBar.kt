@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.util.AttributeSet
 import android.view.View
+import com.steimerbyte.bulkcompressor.engine.MemoryGuard
 
 /**
  * Fortschritt als Reihe von Segmenten - die Nothing-Entsprechung zu
@@ -22,6 +23,20 @@ class SegmentBar @JvmOverloads constructor(
             field = value.coerceIn(0f, 1f)
             invalidate()
         }
+
+    /**
+     * Farbe der gesetzten Segmente. Beim Fortschritt bleibt sie weiss;
+     * die Speichertafel faerbt den Balken nach Speicherdruck um, damit
+     * man die Grenze sieht, bevor die App sie spuert.
+     */
+    fun setLevel(level: MemoryGuard.Level) {
+        filledPaint.color = when (level) {
+            MemoryGuard.Level.OK -> Color.WHITE
+            MemoryGuard.Level.THROTTLE -> Color.parseColor("#9A9A9A")
+            MemoryGuard.Level.HARD -> Color.parseColor("#D71921")
+        }
+        invalidate()
+    }
 
     private val density = resources.displayMetrics.density
     private val segmentCount = 28

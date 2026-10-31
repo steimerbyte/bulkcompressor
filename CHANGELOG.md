@@ -4,6 +4,66 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.3.0] – 2026-10-31
+
+Ein Lauf ueber hunderte Videos dauert Stunden. Diese Fassung beschaeftigt
+sich mit dem, was in dieser Zeit schiefgehen kann: kein RAM, kein Platz,
+ein beendeter Prozess, ein Encoder, der einen Plan nicht mag. Der Grundsatz
+dabei: **langsamer ist ein Erfolg, abgeschossen nicht.**
+
+### Hinzugefügt
+- **Speichertafel ganz oben**: App-Heap (belegt / Obergrenze) mit
+  Segmentbalken, der bei Speicherdruck grau und rot wird, dazu der freie
+  Arbeitsspeicher des **Geraets** und — nach einem erfolgreichen Lauf —
+  der freigewordene Plattenplatz in GB (gespeichert, also auch beim
+  naechsten Start sichtbar). Der Takt ist eine Sekunde, nur im Vordergrund.
+- **RAM-Waechter**: zwei Signale, beide zusammen. Der eigene Heap ab 72 %
+  Belegung drosselt, ab 85 % deutlich; die Systemmeldung `onTrimMemory`
+  ueberstimmt die Heapschaetzung. Gedrosselt wird durch Warten vor der
+  naechsten Datei **und** alle 24 Samples im Video-Transcode; der
+  Bilddecode rechnet unter Druck mit einem kleineren Budget
+  (`maxMemory/10` statt `/6`, unter starker Last `/16`). Nach spaetestens
+  30 s Wartezeit geht es weiter — dann steht im Protokoll, dass gewartet
+  wurde und warum. `TRIM_MEMORY_UI_HIDDEN` gilt bewusst **nicht** als
+  Druck, sonst bremste jeder Wechsel in den Hintergrund den Lauf.
+- **Lauf-Journal und Wiederaufnahme**: jede Datei wird nach ihrem Ergebnis
+  sofort in `filesDir` vermerkt. Wird der Prozess beendet (Speicherdruck,
+  Update, Hersteller-Akkuschoner), setzt der naechste Start beim Rest
+  fort, statt von vorn zu beginnen. Der Dienst nutzt dafuer
+  `START_REDELIVER_INTENT`, die Oberflaeche pruft beim Oeffnen ebenfalls.
+  Ein Journal aelter als 24 Stunden oder fuer einen anderen Ordner wird
+  verworfen; bei bewusstem Abbruch verschwindet es.
+- **Rueckfallebene beim In-Place-Ersetzen**: SAF kuerzt die Zieldatei beim
+  Oeffnen des Schreibkanals. Bisher haette ein Abbruch dazwischen das
+  Original halb geschrieben hinterlassen. Jetzt wird es vorher in den
+  Cache kopiert, die Zielgroesse wird nach dem Schreiben geprueft, und bei
+  jedem Fehlschlag wird die Kopie zurueckgeschrieben. Reicht der Platz
+  nicht, steht das **vorher** im Protokoll.
+- **Platzpruefung vor jeder Datei**: genug freier Cache fuer Datei plus
+  128 MB Reserve, sonst haelt der Lauf mit klarer Meldung an — und das
+  Journal bleibt stehen, damit er spaeter weiterlaeuft.
+- **Wachhund-Erneuerung**: das Zeitlimit von 6 Stunden war das Ende jedes
+  laengeren Laufs. Alle 5 Minuten wird die Sperre neu gesetzt, der
+  Wechsel steht im Protokoll.
+- **H.264-Rueckfall**: meldet der Encoder bei H.265 einen
+  `CodecException`, wird dieselbe Datei einmal mit H.264 erneut versucht.
+
+### Verbessert
+- **Start des Vordergrunddienstes abgesichert**: verweigert Android ihn
+  (ab Android 12 aus dem Hintergrund moeglich), wird der Auftrag gemeldet
+  und beendet, statt eine Ausnahme aus `onStartCommand` fliegen zu lassen.
+- **Ein erschoepfter Heap trifft nur eine Datei**: `OutOfMemoryError` wird
+  je Datei gefangen, protokolliert (mit Speicherstand) und als Fehler
+  gezaehlt; der Lauf macht weiter.
+
+### Tests
+- 78 JVM-Tests (vorher 47): Journal (Abbruch mitten im Schreiben,
+  Wiederaufnahme, kaputte letzte Zeile, Sonderzeichen), Rueckfallebene
+  (Kanal faellt mitten im Schreiben aus, falsche Zielgroesse, fehlender
+  Platz), Speichereinordnung (Schwellen, Systemmeldung gegen Heapschaetzung,
+  `UI_HIDDEN`), Zahlen der Tafel, dazu vier Robolectric-Pruefungen der
+  Tafel selbst.
+
 ## [1.2.0] – 2026-10-31
 
 ### Hinzugefügt

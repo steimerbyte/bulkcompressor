@@ -159,7 +159,8 @@ class VideoTranscoder(private val context: Context) {
         durationMs: Long,
         orientationHint: Int,
         onProgress: (Float) -> Unit,
-        isCancelled: () -> Boolean
+        isCancelled: () -> Boolean,
+        throttle: () -> Unit = {}
     ): VideoPlan {
         val abort = AtomicBoolean(false)
         val extractor = MediaExtractor()
@@ -283,7 +284,10 @@ class VideoTranscoder(private val context: Context) {
                     audioThread.start()
                 }
 
-                transcodeVideo(extractor, decoder, encoder, session, durationMs, onProgress, isCancelled)
+                transcodeVideo(
+                    extractor, decoder, encoder, session, durationMs,
+                    onProgress, isCancelled, throttle
+                )
                 audioThread?.join(10_000)
                 if (audioThread?.isAlive == true) {
                     Log.w("Video", "Tonspur-Thread nach 10 s noch aktiv - Tonspur abgeschnitten")
@@ -347,7 +351,8 @@ class VideoTranscoder(private val context: Context) {
         session: MuxerSession,
         durationMs: Long,
         onProgress: (Float) -> Unit,
-        isCancelled: () -> Boolean
+        isCancelled: () -> Boolean,
+        throttle: () -> Unit
     ) {
         val info = MediaCodec.BufferInfo()
         val durationUs = durationMs * 1000L
@@ -406,6 +411,11 @@ class VideoTranscoder(private val context: Context) {
                         if (sampleBytes > largest) largest = sampleBytes
                         lastTimestampUs = if (timestamp > 0) timestamp else lastTimestampUs
                         extractor.advance()
+                        // Alle 24 Samples eine Gelegenheit zu bremsen. Der
+                        // Encoder haelt dabei Puffer, aber keinen Sperrzustand:
+                        // die Schleife setzt einfach spaeter fort, und der
+                        // Ton laeuft in seinem eigenen Thread weiter.
+                        if (samples % THROTTLE_EVERY == 0L) throttle()
                         if (durationUs > 0) {
                             onProgress((timestamp.toFloat() / durationUs).coerceIn(0f, 1f))
                         }
@@ -1142,5 +1152,12 @@ class VideoTranscoder(private val context: Context) {
 
         /** Fortschrittsstufen, die genau eine Protokollzeile bekommen. */
         private val MILESTONES = listOf(10, 25, 50, 75)
+
+        /**
+         * Samples zwischen zwei Bremsgelegenheiten. Bei 30 fps sind das
+         * knapp 0,8 Sekunden Video - haeufig genug, um Speicherdruck
+         * zeitnah zu bemerken, selten genug, um nicht selbst zu bremsen.
+         */
+        private const val THROTTLE_EVERY = 24L
     }
 }

@@ -2,6 +2,17 @@
 <resources>
     <string name="app_name">Bulk Compressor</string>
 
+    <string name="stats_title">● SPEICHER</string>
+    <string name="stats_heap_label">APP-HEAP</string>
+    <string name="stats_state_ok">FREI</string>
+    <string name="stats_state_throttle">KNAPP</string>
+    <string name="stats_state_hard">SEHR KNAPP</string>
+    <string name="stats_device">Gerät: %1$s frei von %2$s (%3$d %%)</string>
+    <string name="stats_device_unknown">Gerät: Speicher nicht ermittelbar</string>
+    <string name="stats_device_low">· System meldet Speichermangel</string>
+    <string name="stats_freed_label">FREIGEGEBEN</string>
+    <string name="stats_freed_detail">%1$d Dateien · zuletzt %2$s</string>
+
     <string name="main_headline">Bulk Compressor</string>
     <string name="main_sub">Ein Ordner, alle Videos und Bilder. Komprimiert wird an Ort und Stelle: gleicher Dateiname, gleicher Ordner, gleiche Zeit – die Galerie bleibt in ihrer Reihenfolge.</string>
 

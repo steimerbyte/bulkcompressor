@@ -1,11 +1,15 @@
 package com.steimerbyte.bulkcompressor
 
+import android.content.Context
 import android.os.Looper
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import com.steimerbyte.bulkcompressor.log.Log
+import com.steimerbyte.bulkcompressor.model.CompressSettings
+import com.steimerbyte.bulkcompressor.ui.StatsBoard
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -170,5 +174,80 @@ class MainActivitySmokeTest {
 
         val markSound = activity.findViewById<TextView>(R.id.mark_sound)
         assertNotNull("Schalter fuer Klickgeraeusche fehlt im Layout", markSound)
+    }
+
+    // ------------------------------------------------------------------
+    // Speichertafel
+    // ------------------------------------------------------------------
+
+    private fun board(activity: MainActivity): StatsBoard = StatsBoard(
+        activity,
+        activity.findViewById(R.id.stats_board),
+        activity.getSharedPreferences(CompressSettings.PREFS, Context.MODE_PRIVATE)
+    )
+
+    @Test
+    fun `speichertafel zeigt heap und geraetespeicher`() {
+        val activity = activity()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val heap = activity.findViewById<TextView>(R.id.text_stats_heap).text.toString()
+        val total = activity.findViewById<TextView>(R.id.text_stats_heap_total).text.toString()
+        val device = activity.findViewById<TextView>(R.id.text_stats_device).text.toString()
+        val state = activity.findViewById<TextView>(R.id.text_stats_memory_state).text.toString()
+
+        assertTrue("Heap-Zeile ohne Einheit: \"$heap\"", heap.endsWith("MB") || heap.endsWith("GB"))
+        assertTrue("Gesamtzeile ohne Schraegstrich: \"$total\"", total.startsWith("/ "))
+        assertTrue("Geraetezeile fehlt: \"$device\"", device.startsWith("Gerät:"))
+        assertTrue("Zustand unbekannt: \"$state\"", state in setOf("FREI", "KNAPP", "SEHR KNAPP"))
+    }
+
+    @Test
+    fun `freigabe erscheint erst nach erfolgreichem lauf`() {
+        val activity = activity()
+        val group = activity.findViewById<View>(R.id.group_stats_saved)
+        assertEquals("Ohne Lauf darf keine Zahl dastehen", View.GONE, group.visibility)
+
+        board(activity).onRunFinished(
+            running = false,
+            cancelled = false,
+            finished = true,
+            savedBytes = 12L * 1024 * 1024 * 1024,
+            files = 120
+        )
+
+        assertEquals(View.VISIBLE, group.visibility)
+        assertEquals(
+            "12,00 GB",
+            activity.findViewById<TextView>(R.id.text_stats_saved).text.toString()
+        )
+        val detail = activity.findViewById<TextView>(R.id.text_stats_saved_detail).text.toString()
+        assertTrue("Dateizahl fehlt: \"$detail\"", detail.startsWith("120 Dateien"))
+    }
+
+    @Test
+    fun `abgebrochener lauf setzt keine freigabe`() {
+        val activity = activity()
+        val group = activity.findViewById<View>(R.id.group_stats_saved)
+
+        board(activity).onRunFinished(
+            running = false,
+            cancelled = true,
+            finished = false,
+            savedBytes = 5L * 1024 * 1024 * 1024,
+            files = 40
+        )
+
+        assertEquals("Ein Abbruch ist kein Ergebnis", View.GONE, group.visibility)
+    }
+
+    @Test
+    fun `waehrend des laufs keine freigabe`() {
+        val activity = activity()
+        val group = activity.findViewById<View>(R.id.group_stats_saved)
+
+        board(activity).onRunFinished(true, false, false, 3L * 1024 * 1024 * 1024, 30)
+
+        assertEquals(View.GONE, group.visibility)
     }
 }

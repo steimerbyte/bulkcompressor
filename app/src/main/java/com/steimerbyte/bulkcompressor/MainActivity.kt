@@ -8,6 +8,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.DocumentsContract
 import android.provider.Settings
 import android.view.View
@@ -39,6 +41,7 @@ import com.steimerbyte.bulkcompressor.ui.ChipRow
 import com.steimerbyte.bulkcompressor.ui.MediaAdapter
 import com.steimerbyte.bulkcompressor.ui.SegmentBar
 import com.steimerbyte.bulkcompressor.ui.SoundKit
+import com.steimerbyte.bulkcompressor.ui.StatsBoard
 import com.steimerbyte.bulkcompressor.ui.TerminalPanel
 
 class MainActivity : AppCompatActivity(), JobBus.Listener {
@@ -48,6 +51,15 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private var treeUri: Uri? = null
     private var scanResult: ScanResult? = null
     private val selectedIds = LinkedHashSet<String>()
+
+    private lateinit var stats: StatsBoard
+    private val statsHandler = Handler(Looper.getMainLooper())
+    private val statsTick = object : Runnable {
+        override fun run() {
+            stats.refresh()
+            statsHandler.postDelayed(this, STATS_INTERVAL_MS)
+        }
+    }
 
     private lateinit var adapter: MediaAdapter
     private lateinit var textFolder: TextView
@@ -143,6 +155,8 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         setupSliders()
         setupToggles()
 
+        stats = StatsBoard(this, findViewById(R.id.stats_board), prefs)
+
         adapter = MediaAdapter { item -> toggleSelection(item) }
         listMedia.layoutManager = LinearLayoutManager(this)
         listMedia.adapter = adapter
@@ -167,6 +181,18 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         applySettingsToViews()
         requestLegacyStoragePermission()
         restoreFolder()
+        resumeInterruptedRun()
+    }
+
+    /**
+     * Ein vom System beendeter Lauf wird beim Oeffnen der App
+     * fortgesetzt - sonst waere ein Stundenlauf nach einem Prozessabbruch
+     * stillschweigend verloren.
+     */
+    private fun resumeInterruptedRun() {
+        val snapshot = CompressionService.resumeIfInterrupted(this) ?: return
+        toast("Lauf wird fortgesetzt: ${snapshot.doneCount} von ${snapshot.total} erledigt")
+        Log.i(TAG, "Wiederaufnahme gestartet: ${snapshot.describe()}")
     }
 
     override fun onStart() {
@@ -177,6 +203,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     }
 
     override fun onStop() {
+        statsHandler.removeCallbacks(statsTick)
         JobBus.removeListener(this)
         Log.removeListener(logListener)
         super.onStop()
@@ -184,6 +211,10 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     override fun onResume() {
         super.onResume()
+        // Die Tafel lebt nur im Vordergrund: im Hintergrund waere ein
+        // Sekundentakt nur Stromverbrauch ohne Betrachter.
+        statsHandler.removeCallbacks(statsTick)
+        statsHandler.post(statsTick)
         // Nach dem Rueckweg aus den Einstellungen kann die Berechtigung
         // jetzt vorliegen - die Zeile verschwindet dann sofort.
         if (::buttonAccess.isInitialized) updateAccessRow()
@@ -763,6 +794,14 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             buttonStart.isEnabled = !state.running
             buttonCancel.visibility = if (state.running) View.VISIBLE else View.GONE
             if (state.finished) buttonStart.setText(R.string.button_start)
+
+            stats.onRunFinished(
+                running = state.running,
+                cancelled = state.cancelled,
+                finished = state.finished,
+                savedBytes = state.savedBytes,
+                files = state.done
+            )
         }
     }
 
@@ -792,6 +831,9 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         private const val TAG = "UI"
         private const val KEY_TREE = "tree_uri"
         private const val TERMINAL_LINES = 400
+
+        /** Takt der Speichertafel - ein Blick pro Sekunde reicht. */
+        private const val STATS_INTERVAL_MS = 1000L
 
         /** Wie stark ein nicht wirksamer Abschnitt zurueckgenommen wird. */
         private const val INACTIVE_ALPHA = 0.35f

@@ -2,6 +2,7 @@ package com.steimerbyte.bulkcompressor.job
 
 import android.content.ContentResolver
 import android.content.Context
+import android.media.MediaCodec
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
@@ -9,9 +10,11 @@ import android.os.Environment
 import android.provider.DocumentsContract
 import com.steimerbyte.bulkcompressor.engine.ImageCompressor
 import com.steimerbyte.bulkcompressor.engine.JobCancelledException
+import com.steimerbyte.bulkcompressor.engine.MemoryGuard
 import com.steimerbyte.bulkcompressor.engine.MetaRestore
 import com.steimerbyte.bulkcompressor.engine.Naming
 import com.steimerbyte.bulkcompressor.engine.PresetEngine
+import com.steimerbyte.bulkcompressor.engine.VideoPlan
 import com.steimerbyte.bulkcompressor.engine.VideoTranscoder
 import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.model.CompressSettings
@@ -54,49 +57,132 @@ class CompressionJob(
     private var runStartedAt = 0L
     private var fileStartedAt = 0L
 
+    /** Lauf-Journal: haelt fest, welche Datei schon erledigt ist. */
+    private var journal: RunJournal? = null
+
+    /** Ersetzen mit Rueckfallebene; erst bei Bedarf angelegt. */
+    private val safeReplace: SafeReplace by lazy { SafeReplace(context.cacheDir) }
+
+    /** Wahr, wenn der Lauf wegen vollem Speicher angehalten wurde. */
+    private var storageStopped = false
+
+    /** Begruendung des letzten Fehlschlags fuer das Journal. */
+    private var failureReason: String = ""
+
     fun run() {
         runStartedAt = System.currentTimeMillis()
-        val videoCount = items.count { it.kind == MediaKind.VIDEO }
-        val totalBytes = items.sumOf { it.sizeBytes }
+
+        // Ein unterbrochener Lauf wird fortgesetzt, statt von vorn zu beginnen.
+        val snapshot = openJournal()
+        val alreadyDone = snapshot?.completed?.keys ?: emptySet()
+        // Schluessel ist die SAF-Dokument-ID: danach sucht der Dienst die
+        // Dateien beim Fortsetzen wieder, nicht nach der URI.
+        val work = items.filterNot { it.docId in alreadyDone }
+        val totalBytes = work.sumOf { it.sizeBytes }
+        val videoCount = work.count { it.kind == MediaKind.VIDEO }
         Log.i(
             "Job",
-            "Start: ${items.size} Dateien ($videoCount Videos, ${items.size - videoCount} Bilder," +
+            "Start: ${work.size} Dateien ($videoCount Videos, ${work.size - videoCount} Bilder," +
                 " ${formatSize(totalBytes)}) · Ziel: ${describeSettings()}"
         )
         Log.i("Job", "Arbeitsverzeichnis: ${context.cacheDir.absolutePath} · Temp-Dateien je Datei neu")
+        Log.i("Ram", "Speicher zu Beginn: ${MemoryGuard.snapshot()}")
         JobBus.publish(
             JobBus.State(
                 running = true,
-                total = items.size,
-                log = listOf("Start: ${items.size} Dateien", "Ziel: ${describeSettings()}")
+                total = work.size,
+                log = buildList {
+                    add("Start: ${work.size} Dateien")
+                    add("Ziel: ${describeSettings()}")
+                    if (snapshot != null) add("Wiederaufnahme: ${snapshot.describe()}")
+                }
             )
         )
+        if (snapshot != null) {
+            logLine(
+                "WIEDERAUFNAHME: ${snapshot.doneCount} von ${snapshot.total} Dateien waren schon erledigt," +
+                    " ${work.size} werden jetzt bearbeitet"
+            )
+        }
 
-        for ((index, item) in items.withIndex()) {
+        if (work.isEmpty()) {
+            Log.i("Job", "Nichts zu tun: alle ${items.size} Dateien waren bereits erledigt")
+            journal?.finish("fertig")
+            journal = null
+            JobBus.publish(
+                JobBus.state.copy(
+                    running = false,
+                    finished = true,
+                    total = 0,
+                    done = 0,
+                    overall = 1f,
+                    currentName = ""
+                )
+            )
+            return
+        }
+
+        for ((index, item) in work.withIndex()) {
             if (cancelled.get()) {
-                Log.i("Job", "Abbruch bemerkt bei Datei ${index + 1}/${items.size} (${item.displayName})")
+                Log.i("Job", "Abbruch bemerkt bei Datei ${index + 1}/${work.size} (${item.displayName})")
                 break
             }
+            if (!ensureStorage(item, index, work.size)) {
+                storageStopped = true
+                break
+            }
+            // Vor jeder Datei: bei Speicherdruck warten, statt den Prozess
+            // deswegen zu verlieren.
+            MemoryGuard.pauseBefore { cancelled.get() }
+
             Log.i(
                 "Job",
-                "Datei ${index + 1}/${items.size}: ${item.displayName} · ${kindLabel(item)}" +
+                "Datei ${index + 1}/${work.size}: ${item.displayName} · ${kindLabel(item)}" +
                     " · ${formatSize(item.sizeBytes)} (${item.sizeBytes} B) · ${item.extension.ifBlank { "ohne Endung" }}" +
                     " · ${item.mime.ifBlank { "ohne MIME" }} · Aktion: ${describeAction(item)}"
             )
             publish(index, item.displayName, 0f)
+            val failedBefore = failed
+            val skippedBefore = skipped
+            val afterBefore = afterBytes
+            failureReason = ""
+            var cancelledHere = false
             try {
                 process(item, index)
             } catch (e: JobCancelledException) {
+                cancelledHere = true
                 Log.i("Job", "abgebrochen vor ${item.displayName}")
-                break
+            } catch (o: OutOfMemoryError) {
+                failed++
+                failureReason = "Speicher erschoepft"
+                logLine("FEHLER ${item.displayName}: Arbeitsspeicher erschoepft")
+                Log.e("Job", "fehlgeschlagen: ${item.displayName} · Speicher erschoepft · ${MemoryGuard.snapshot()}")
             } catch (t: Throwable) {
                 failed++
-                logLine("FEHLER ${item.displayName}: ${t.message ?: t.javaClass.simpleName}")
+                failureReason = t.message ?: t.javaClass.simpleName
+                logLine("FEHLER ${item.displayName}: ${failureReason}")
                 Log.e("Job", "fehlgeschlagen: ${item.displayName} nach ${elapsedFile()} ms", t)
             }
+            if (cancelledHere) break
+
+            // Journal: eine Zeile je Datei, sofort auf der Platte.
+            val result = when {
+                failed > failedBefore -> RunJournal.Result.FAIL
+                skipped > skippedBefore -> RunJournal.Result.SKIP
+                else -> RunJournal.Result.OK
+            }
+            val savedAfter = if (result == RunJournal.Result.OK) afterBytes - afterBefore else 0L
+            journal?.mark(
+                item.docId,
+                result,
+                beforeBytes = item.sizeBytes,
+                afterBytes = savedAfter,
+                reason = failureReason.take(80)
+            )
+
             done = index + 1
             processedBytes += item.sizeBytes
-            if (done % CHECKPOINT_EVERY == 0 && done < items.size) checkpoint("Zwischenstand")
+            if (done % CHECKPOINT_EVERY == 0 && done < work.size) checkpoint("Zwischenstand")
         }
 
         val cancelledNow = cancelled.get()
@@ -114,11 +200,36 @@ class CompressionJob(
                 currentName = ""
             )
         )
-        logLine(
-            if (cancelledNow) "Abgebrochen nach $done von ${items.size} Dateien"
-            else "Fertig: $done bearbeitet, $skipped uebersprungen, $failed fehlgeschlagen"
-        )
+        if (storageStopped) {
+            logLine(
+                "ANGEHALTEN: Im Cache ist zu wenig Platz fuer die naechste Datei." +
+                    " Die offene Liste bleibt gespeichert und wird beim naechsten Start fortgesetzt."
+            )
+        } else {
+            logLine(
+                if (cancelledNow) "Abgebrochen nach $done von ${work.size} Dateien"
+                else "Fertig: $done bearbeitet, $skipped uebersprungen, $failed fehlgeschlagen"
+            )
+        }
         checkpoint("Endstand")
+        if (MemoryGuard.pauseCount() > 0) {
+            Log.w(
+                "Ram",
+                "Speicherdruck im Lauf: ${MemoryGuard.pauseCount()} Drosselungen," +
+                    " ${MemoryGuard.waitedMs()} ms gewartet · ${MemoryGuard.snapshot()}"
+            )
+        }
+
+        // Journal aufraeumen: abgeschlossen oder bewusst abgebrochen heisst,
+        // es gibt nichts fortzusetzen. Bei Speichermangel bleibt es stehen -
+        // dann nimmt der naechste Start die Dateiliste wieder auf.
+        if (!storageStopped) {
+            journal?.finish(if (cancelledNow) "abgebrochen" else "fertig")
+            journal = null
+        } else {
+            journal?.close()
+            journal = null
+        }
         Log.i(
             "Job",
             "Summen: ${formatSize(beforeBytes)} -> ${formatSize(afterBytes)}" +
@@ -134,6 +245,75 @@ class CompressionJob(
                 " · ${formatSize(savedTotal())} (${percent(beforeBytes, afterBytes)}) gespart" +
                 if (cancelledNow) " · vorzeitig abgebrochen" else " · vollstaendig durchgelaufen"
         )
+    }
+
+    /**
+     * Oeffnet das Journal und entscheidet, ob der Lauf fortgesetzt wird.
+     *
+     * Fortgesetzt wird nur, wenn eine frueher angefangene Liste zum
+     * selben Ordner gehoert, nicht abgeschlossen wurde und nicht aelter
+     * als einen Tag ist. Alles andere wird verworfen - eine Woche alte
+     * Liste gegen ein Geraet, dessen Dateien sich seither geaendert
+     * haben, waere schlimmer als ein neuer Anfang.
+     */
+    private fun openJournal(): RunJournal.Snapshot? {
+        val opened = RunJournal.open(context)
+        journal = opened
+        val existing = RunJournal.load(context)
+        val reason = when {
+            existing == null -> "keins vorhanden"
+            existing.finished -> "war abgeschlossen"
+            existing.treeUri != treeUri.toString() -> "gehoert zu einem anderen Ordner"
+            existing.ageMs() > RunJournal.MAX_RESUME_AGE_MS ->
+                "zu alt (letzte Aenderung vor ${existing.ageMs() / 1000 / 60} min)"
+            else -> null
+        }
+        if (reason != null) {
+            if (existing != null) Log.i("Job", "Journal verworfen: $reason")
+            opened.start(treeUri.toString(), items.map { it.docId })
+            if (!opened.isOpen) {
+                Log.w("Job", "Journal liess sich nicht anlegen - ein Abbruch kann nicht fortgesetzt werden")
+                journal = null
+            }
+            return null
+        }
+        if (!opened.resume()) {
+            Log.w("Job", "Journal liess sich nicht oeffnen - der Lauf beginnt von vorn")
+            return null
+        }
+        Log.i(
+            "Job",
+            "Journal gefunden: ${existing?.describe()} · angelegt ${existing?.startedAt}," +
+                " zuletzt ${existing?.updatedAt} · ${existing?.remaining?.size} Dateien offen"
+        )
+        return existing
+    }
+
+    /**
+     * Prueft vor jeder Datei den Platz im Cache. Ohne diese Pruefung
+     * scheitert die Datei mitten im Schreiben, und bei In-Place-Ersetzen
+     * waere das ein Risiko fuer das Original: die Rueckfallebene braucht
+     * Platz, sonst gibt es keine.
+     */
+    private fun ensureStorage(item: MediaItem, index: Int, total: Int): Boolean {
+        val free = context.cacheDir.usableSpace
+        val needed = item.sizeBytes + STORAGE_RESERVE
+        if (free >= needed) {
+            if (free < needed * 2) {
+                Log.w(
+                    "Job",
+                    "Platz wird knapp: ${formatSize(free)} frei, ${formatSize(needed)} fuer die naechste Datei nötig"
+                )
+            }
+            return true
+        }
+        Log.e(
+            "Job",
+            "angehalten bei Datei ${index + 1}/$total (${item.displayName})" +
+                " · Cache voll: ${formatSize(free)} frei, ${formatSize(needed)} gebraucht" +
+                " (Datei ${formatSize(item.sizeBytes)} + Reserve ${formatSize(STORAGE_RESERVE)})"
+        )
+        return false
     }
 
     /**
@@ -272,15 +452,44 @@ class CompressionJob(
                 " gegen ${formatSize(item.sizeBytes)} Original"
         )
 
-        val actual = transcoder.transcode(
+        // Drosselklappe fuer den Transcoder: bei Speicherdruck wartet die
+        // Bildschleife kurz, statt dass Android den Prozess beendet.
+        val throttle: () -> Unit = {
+            if (MemoryGuard.level() != MemoryGuard.Level.OK) {
+                MemoryGuard.pauseBefore { cancelled.get() }
+            }
+        }
+        fun runTranscode(planToUse: VideoPlan) = transcoder.transcode(
             uri = item.uri,
             target = temp,
-            plan = plan,
+            plan = planToUse,
             durationMs = info.durationMs,
             orientationHint = info.rotation,
             onProgress = { publish(index, item.displayName, it) },
-            isCancelled = { cancelled.get() }
+            isCancelled = { cancelled.get() },
+            throttle = throttle
         )
+
+        val actual = try {
+            runTranscode(plan)
+        } catch (t: Throwable) {
+            // Ein Codec, der einen Plan nicht mag, ist ein Geraetedetail:
+            // derselbe Film mit H.264 geht fast immer. Einmal versuchen,
+            // nicht in einer Schleife - zwei Laeufe ueber dieselbe Datei
+            // kosten doppelt so viel Zeit wie einer.
+            val retry = t is MediaCodec.CodecException &&
+                plan.codecMime != PresetEngine.MIME_AVC &&
+                !cancelled.get()
+            if (!retry) throw t
+            Log.w(
+                "Job",
+                "${item.displayName} · Encoder meldet ${t.javaClass.simpleName}: ${t.message}" +
+                    " · zweiter Versuch mit H.264 statt H.265"
+            )
+            logLine("HINWEIS ${item.displayName}: H.265 scheiterte am Encoder, neuer Versuch mit H.264")
+            temp.delete()
+            runTranscode(plan.copy(codecMime = PresetEngine.MIME_AVC))
+        }
         Log.i(
             "Job",
             "${item.displayName} · Transcode fertig nach ${elapsedFile()} ms" +
@@ -397,9 +606,40 @@ class CompressionJob(
             Log.i(
                 "Job",
                 "${item.displayName} · schreibe in das Original (In-Place moeglich:" +
-                    " Endung ${item.extension} passt zu $mime)"
+                    " Endung ${item.extension} passt zu $mime) mit Rueckfallebene"
             )
-            writeDocument(target, temp)
+            when (val outcome = safeReplace.replace(
+                resolver = resolver,
+                target = target,
+                payload = temp,
+                sourceSize = item.sizeBytes,
+                expectedSize = after,
+                label = item.displayName
+            )) {
+                is SafeReplace.Outcome.Written -> Unit
+                is SafeReplace.Outcome.Restored -> {
+                    failed++
+                    logLine(
+                        "FEHLER ${item.displayName}: Schreiben abgebrochen (${outcome.reason}) - " +
+                            "Original wiederhergestellt, es ist unveraendert"
+                    )
+                    return
+                }
+                is SafeReplace.Outcome.Damaged -> {
+                    failed++
+                    logLine(
+                        "FEHLER ${item.displayName}: Schreiben abgebrochen (${outcome.reason}) - " +
+                            "Original ist beschaedigt, bitte aus einer Sicherung ersetzen"
+                    )
+                    Log.e(
+                        "Job",
+                        "DATENVERLUST-RISIKO ${item.displayName} · ${outcome.reason}" +
+                            " · keine oder fehlgeschlagene Rueckfallebene" +
+                            " · Quelle ${formatSize(item.sizeBytes)} · Zielgroesse ${formatSize(after)}"
+                    )
+                    return
+                }
+            }
         } else {
             val newName = Naming.compressedName(item.displayName, extension.takeIf { it != item.extension })
             val unique = Naming.uniqueName(newName) { candidate -> existsInFolder(item.parentId, candidate) }
@@ -566,6 +806,14 @@ class CompressionJob(
 
         /** Nach so vielen Dateien eine Verdichtungszeile - nicht eine pro Datei. */
         private const val CHECKPOINT_EVERY = 10
+
+        /**
+         * Platz, der im Cache neben der Datei selbst frei bleiben muss:
+         * Platz fuer die Rueckfallebene beim In-Place-Ersetzen und fuer
+         * die Ausgabedatei. 128 MB ist die Untergrenze; grosse Videos
+         * brauchen mehr, dafuer sorgt die Groesse der Datei selbst.
+         */
+        private const val STORAGE_RESERVE = 128L * 1024 * 1024
 
         fun formatSize(bytes: Long): String {
             if (bytes < 1024) return "$bytes B"

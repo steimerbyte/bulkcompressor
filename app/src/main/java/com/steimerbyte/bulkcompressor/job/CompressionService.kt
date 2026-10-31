@@ -10,7 +10,9 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -36,6 +38,35 @@ class CompressionService : Service(), JobBus.Listener {
     private var notificationUpdates = 0
     private var runStartedAt = 0L
     private var cancelRequestedAt = 0L
+    private var wakeLockRenewals = 0
+
+    private val renewHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val renewLock = object : Runnable {
+        override fun run() {
+            val lock = wakeLock ?: return
+            if (lock.isHeld) {
+                renewHandler.postDelayed(this, WAKE_LOCK_RENEW_MS)
+                return
+            }
+            val renewed = runCatching { lock.acquire(WAKE_LOCK_TIMEOUT_MS) }
+            wakeLockRenewals++
+            if (renewed.isSuccess && lock.isHeld) {
+                Log.d(
+                    "Service",
+                    "Wachhund erneuert (${wakeLockRenewals}. Mal) · Laufzeit " +
+                        "${System.currentTimeMillis() - runStartedAt} ms · neues Limit" +
+                        " ${WAKE_LOCK_TIMEOUT_MS / 60_000} min"
+                )
+                renewHandler.postDelayed(this, WAKE_LOCK_RENEW_MS)
+            } else {
+                Log.e(
+                    "Service",
+                    "Wachhund liess sich nicht erneuern - der Lauf kann bei Bildschirmsperre einfrieren",
+                    renewed.exceptionOrNull()
+                )
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -64,8 +95,16 @@ class CompressionService : Service(), JobBus.Listener {
                     return START_NOT_STICKY
                 }
                 Log.i("Service", "Start: ${docIds.size} Dateien · $tree")
-                startForegroundNow()
+                if (!startForegroundNow()) {
+                    Log.e("Service", "Vordergrunddienst nicht moeglich - Auftrag wird nicht gestartet")
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
                 launchWorker(Uri.parse(tree), docIds)
+                // Ein vom System beendeter Prozess bekommt den Auftrag
+                // erneut zugestellt; das Journal nimmt die erledigten
+                // Dateien heraus.
+                return START_REDELIVER_INTENT
             }
             ACTION_CANCEL -> {
                 cancelRequestedAt = System.currentTimeMillis()
@@ -246,24 +285,48 @@ class CompressionService : Service(), JobBus.Listener {
     }
 
     @Suppress("DEPRECATION")
-    private fun startForegroundNow() {
+    private fun startForegroundNow(): Boolean {
         // Ohne POST_NOTIFICATIONS (ab Android 13) laeuft der Dienst
         // trotzdem; dann ist eben nur keine Benachrichtigung sichtbar.
         val notification = buildNotification("Startet ...", null, 0, true)
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        val started = runCatching {
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        }
+        if (started.isFailure) {
+            // Ab Android 12 kann das System den Start verweigern, wenn die
+            // App aus dem Hintergrund heraus startet. Ohne diesen Schritt
+            // wuerde die Ausnahme aus onStartCommand fliegen und den
+            // Prozess mitnehmen; stattdessen wird der Auftrag gemeldet
+            // und bleibt unerledigt.
+            exitWithError(started.exceptionOrNull())
+            return false
         }
         Log.i(
             "Service",
             "Vordergrunddienst aktiv: Kennung $NOTIFICATION_ID · Typ " +
                 if (Build.VERSION.SDK_INT >= 29) "DATA_SYNC" else "ohne Typ (API < 29)"
         )
+        return true
+    }
+
+    /** Meldet einen Auftrag, der nicht starten konnte - sichtbar, nicht nur im Log. */
+    private fun exitWithError(error: Throwable?) {
+        val text = "Start nicht moeglich: ${error?.javaClass?.simpleName ?: "unbekannt"}"
+        Log.e("Service", "$text · ${error?.message}", error)
+        JobBus.appendLog("FEHLER: $text")
+        JobBus.publish(JobBus.state.copy(running = false, finished = true))
+        runCatching {
+            getSystemService(NotificationManager::class.java)
+                .notify(NOTIFICATION_ID, buildNotification(text, null, 0, false))
+        }
     }
 
     private fun finishForeground() {
@@ -392,9 +455,12 @@ class CompressionService : Service(), JobBus.Listener {
             Log.w("Service", "Wachhund nach acquire nicht gehalten - Lauf kann einfrieren")
         }
         wakeLock = lock
+        renewHandler.removeCallbacks(renewLock)
+        renewHandler.postDelayed(renewLock, WAKE_LOCK_RENEW_MS)
     }
 
     private fun releaseWakeLock() {
+        renewHandler.removeCallbacks(renewLock)
         val lock = wakeLock
         wakeLock = null
         if (lock == null) return
@@ -403,7 +469,13 @@ class CompressionService : Service(), JobBus.Listener {
             return
         }
         runCatching { lock.release() }
-            .onSuccess { Log.i("Service", "Wachhund freigegeben · Kennung bulkcompressor:job · gehalten nein") }
+            .onSuccess {
+                Log.i(
+                    "Service",
+                    "Wachhund freigegeben · Kennung bulkcompressor:job · gehalten nein" +
+                        (if (wakeLockRenewals > 0) " · $wakeLockRenewals Erneuerungen" else "")
+                )
+            }
             .onFailure { Log.w("Service", "Wachhund liess sich nicht freigeben", it) }
     }
 
@@ -432,6 +504,12 @@ class CompressionService : Service(), JobBus.Listener {
         /** Zeitlimit des Wachhunds: danach gibt Android die Sperre selbst frei. */
         private const val WAKE_LOCK_TIMEOUT_MS = 6 * 60 * 60 * 1000L
 
+        /**
+         * Erneuerungsabstand. Deutlich unter dem Zeitlimit, damit ein
+         * einzelner verpasster Durchlauf die Sperre nicht ablaufen laesst.
+         */
+        private const val WAKE_LOCK_RENEW_MS = 5 * 60 * 1000L
+
         fun start(context: Context, treeUri: Uri, docIds: List<String>) {
             val intent = Intent(context, CompressionService::class.java)
                 .setAction(ACTION_START)
@@ -440,6 +518,32 @@ class CompressionService : Service(), JobBus.Listener {
             // ContextCompat faellt unter Android 8 auf startService zurueck -
             // startForegroundService gibt es erst ab API 26.
             ContextCompat.startForegroundService(context, intent)
+        }
+
+        /**
+         * Setzt einen vom System beendeten Lauf fort. Aufgerufen beim
+         * Start der Oberflaeche: ohne diesen Aufruf bliebe von einem
+         * 600-Dateien-Lauf nach einem Prozessabbruch nur die Erinnerung
+         * des Nutzers uebrig.
+         */
+        fun resumeIfInterrupted(context: Context): RunJournal.Snapshot? {
+            if (JobBus.state.running) return null
+            val snapshot = RunJournal.load(context) ?: return null
+            val reason = when {
+                snapshot.finished -> "war abgeschlossen"
+                snapshot.remaining.isEmpty() -> "hatte keine offenen Dateien"
+                snapshot.ageMs() > RunJournal.MAX_RESUME_AGE_MS -> "ist zu alt"
+                else -> null
+            }
+            if (reason != null) {
+                runCatching { RunJournal.fileFor(context).delete() }
+                Log.i("Service", "Journal $reason - nichts fortzusetzen")
+                return null
+            }
+            Log.i("Service", "Unterbrochener Lauf gefunden: ${snapshot.describe()} · wird fortgesetzt")
+            JobBus.appendLog("WIEDERAUFNAHME: ${snapshot.describe()}")
+            start(context, Uri.parse(snapshot.treeUri), snapshot.remaining)
+            return snapshot
         }
 
         fun cancel(context: Context) {

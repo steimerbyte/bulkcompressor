@@ -29,7 +29,9 @@ Kein Konto. Kein Netzwerk. Keine Analytics. Kein `INTERNET`-Recht.
 2. **Preset einstellen** (siehe unten).
 3. **Auswählen**, was bearbeitet wird — alles oder einzelne Dateien.
 4. **Start.** Alles Weitere läuft als Vordergrunddienst mit
-   Fortschrittsbenachrichtigung, auch bei gesperrtem Bildschirm.
+   Fortschrittsbenachrichtigung, auch bei gesperrtem Bildschirm — über
+   Stunden, mit Speicherbremse und ohne Verlust des Fortschritts (siehe
+   [Lange Läufe](#lange-läufe)).
 
 Das Protokoll zeigt pro Datei eine Zeile:
 
@@ -160,6 +162,26 @@ dort nichts; die Datei entsteht mit der ersten Zeile.
   rotierend) — hieraus holt die App beim Start den Vorlauf, wenn der
   Download-Ordner mal nicht beschreibbar ist.
 
+## Lange Läufe
+
+Ein Lauf über 600 Videos dauert Stunden bis zu einem Tag. In dieser Zeit
+passieren Dinge, die mit einem einzelnen Foto nie passieren. Dagegen steht:
+
+|Situation|Verhalten|
+|---|---|
+|RAM wird knapp|Der Lauf **wartet** vor der nächsten Datei und alle 24 Samples mitten im Video. Unter Druck rechnet der Bilddecode mit kleinerem Budget (`maxMemory/10`, bei starker Last `/16`). Nach 30 s Wartezeit geht es weiter und das Protokoll sagt es.|
+|System meldet Speichermangel (`onTrimMemory`)|Dieselbe Bremse, sofort — die Systemmeldung überstimmt die eigene Heapschätzung.|
+|Prozess wird beendet (Update, Hersteller-Akkuschoner)|Das **Lauf-Journal** in `filesDir` kennt jede erledigte Datei. Der nächste Start setzt beim Rest fort — automatisch, auch aus dem Dienst heraus (`START_REDELIVER_INTENT`).|
+|Cache läuft voll|Vor jeder Datei wird geprüft: Dateigröße + 128 MB Reserve. Sonst hält der Lauf an, das Journal bleibt stehen, die Meldung nennt die Zahlen.|
+|Wachhund läuft nach 6 h ab|Alle 5 Minuten wird er erneuert.|
+|Schreiben in die Originaldatei bricht ab|Die Datei wurde vorher in den Cache kopiert; Zielgröße wird geprüft; im Fehlerfall wird zurückgeschrieben. Reicht der Platz für die Kopie nicht, steht das **vorher** im Protokoll.|
+|Encoder mag den Plan nicht (`CodecException`)|Ein Versuch mit H.264 statt H.265, dann erst Fehler.|
+|Heap erschöpft|Betrifft genau eine Datei; sie wird als Fehler gezählt, der Lauf macht weiter.|
+
+Die **Speichertafel** ganz oben zeigt das laufend: App-Heap mit
+Segmentbalken (weiß → grau → rot), freier Arbeitsspeicher des Geräts und —
+nach einem erfolgreichen Lauf — den freigewordenen Plattenplatz in GB.
+
 ## Technik
 
 * **Video:** Decoder → Surface → Encoder (MediaCodec), Audio wird
@@ -184,6 +206,15 @@ dort nichts; die Datei entsteht mit der ersten Zeile.
   Der Ton folgt zusätzlich der Systemeinstellung „Berührungsklänge":
   ist die aus, bleibt die App still, egal was der Schalter in der App
   sagt. Abschaltbar über die Zeile **KLICKGERÄUSCHE**.
+* **Speicherwächter** (`MemoryGuard`): bewusst *eine* Datei nach der
+  anderen, kein paralleles Kodieren — der Speicherbedarf bleibt konstant.
+  Die Einordnung ist eine reine Funktion und damit ohne Gerät geprüft.
+* **Journal** (`RunJournal`): eine Textzeile je Datei, sofort auf der
+  Platte; eine abgeschnittene letzte Zeile (Stromausfall mitten im
+  Schreiben) gilt als offene Datei und wird erneut bearbeitet.
+* **Rückfallebene** (`SafeReplace`): Kopie im Cache, Größenprüfung nach
+  dem Schreiben, Rückschreiben im Fehlerfall — der Kern läuft über
+  austauschbare Kanäle, damit der Fehlerfall im Test erzeugt werden kann.
 * Kein `ffmpeg`: die App ist ~2 MB groß statt ~60 MB, und die
   Hardware-Encoder des Geräts sind ohnehin schneller als libx264.
 
@@ -213,6 +244,10 @@ Auf einem echten Gerät wurde diese Fassung noch nicht ausgeführt — siehe
   mit derselben Auflösung.
 * **Kein Bild-Auflösungs-Limit**, nur Qualität — ein 48-MP-Foto bleibt
   48 MP groß, nur mit weniger Byte pro Pixel.
+* **Die Speicherbremse ist auf einem Gerät nicht erprobt.** Schwellen
+  (72 %/85 %), Systemmeldungen und die Wartezeiten sind ohne Hardware
+  geprüft (reine Einordnung, Journal, Rückfallebene — 78 JVM-Tests), das
+  Zusammenspiel mit echten Encodern nicht.
 * **EXIF-Kopieren deckt die üblichen Felder ab**, keine vollständige
   Kopie: die Android-Bibliothek kann vorhandene Felder nicht
   aufzählen. Vorschaubilder im EXIF werden nicht neu erzeugt.

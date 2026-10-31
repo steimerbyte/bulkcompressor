@@ -78,12 +78,13 @@ class ImageCompressor(private val context: Context) {
 
             val desiredShortEdge =
                 if (settings.imageShortEdge <= 0) minOf(srcWidth, srcHeight) else settings.imageShortEdge
-            val sample = chooseSampleSize(srcWidth, srcHeight, desiredShortEdge)
-            val budgetMb = Runtime.getRuntime().maxMemory() / 6 / (1024 * 1024)
+            val divisor = MemoryGuard.decodeBudgetDivisor()
+            val sample = chooseSampleSize(srcWidth, srcHeight, desiredShortEdge, divisor)
+            val budgetMb = Runtime.getRuntime().maxMemory() / divisor / (1024 * 1024)
             Log.d(
                 "Image",
                 "$name · Ziel-Kurzkante ${desiredShortEdge}px · inSampleSize=$sample" +
-                    " · Speicherbudget $budgetMb MB (maxMemory/6)"
+                    " · Speicherbudget $budgetMb MB (maxMemory/$divisor, Stufe ${MemoryGuard.level().label})"
             )
 
             val options = BitmapFactory.Options().apply {
@@ -181,14 +182,19 @@ class ImageCompressor(private val context: Context) {
      * Ziel-Kurzkante hat - danach zusaetzlich so weit, bis das Bitmap
      * in das Speicherbudget passt.
      */
-    private fun chooseSampleSize(width: Int, height: Int, desiredShortEdge: Int): Int {
+    private fun chooseSampleSize(
+        width: Int,
+        height: Int,
+        desiredShortEdge: Int,
+        budgetDivisor: Int = MemoryGuard.decodeBudgetDivisor()
+    ): Int {
         val shortEdge = minOf(width, height)
         var sample = 1
         while (sample < 16 && sample * 2 * desiredShortEdge <= shortEdge) {
             sample *= 2
         }
 
-        val budget = Runtime.getRuntime().maxMemory() / 6
+        val budget = Runtime.getRuntime().maxMemory() / budgetDivisor.coerceAtLeast(1)
         while (sample < 32 && (width / sample).toLong() * (height / sample) * 4 > budget) {
             sample *= 2
         }

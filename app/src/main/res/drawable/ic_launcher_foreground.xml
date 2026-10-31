@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher-Icon: zwei Pfeile, die aufeinander zeigen - verkleinern. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M18,44 h18 v-10 l16,20 -16,20 v-10 h-18 z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M90,44 h-18 v-10 l-16,20 16,20 v-10 h18 z" />
+</vector>

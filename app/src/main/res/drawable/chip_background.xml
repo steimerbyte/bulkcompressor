@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auswahl-Chip: gefuellt = gewaehlt, Umriss = nicht gewaehlt. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/nothing_white" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/nothing_surface" />
+            <corners android:radius="10dp" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/nothing_outline" />
+        </shape>
+    </item>
+</selector>

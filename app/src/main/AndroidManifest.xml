@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+        Kein Netzwerkzugriff: die App hat bewusst keine INTERNET-Berechtigung.
+        Gelesen und geschrieben wird ausschliesslich in dem Ordner, den der
+        Benutzer ueber den Systemdialog freigibt (SAF). Deshalb braucht die
+        App auch keine Speicher-Berechtigung.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+        Nur fuer den Zeitstempel: Android bietet keine API, um den
+        Aenderungszeitpunkt einer SAF-Datei zu setzen - das geht nur ueber
+        den Dateipfad. Die Berechtigung ist freiwillig; ohne sie
+        komprimiert die App genauso, nur mit neuem Zeitstempel. Deshalb
+        steht sie nicht im Vordergrund, sondern erscheint als Schaltflaeche,
+        sobald der Zeitstempel-Schalter aktiv ist.
+    -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.BulkCompressor">
+
+        <!--
+            exported="true" ist hier Pflicht: ohne diesen Eintrag kann der
+            Launcher die Activity nicht starten. Es gibt keinen Intent-Filter,
+            der fremde Apps durchlaesst - nur MAIN/LAUNCHER.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.BulkCompressor">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            exported="false": der Dienst nimmt nur Befehle aus der eigenen
+            App an. Ein Kompressionslauf darf nicht von aussen startbar sein.
+        -->
+        <service
+            android:name=".job.CompressionService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+    </application>
+
+</manifest>

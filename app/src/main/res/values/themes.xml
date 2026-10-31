@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <style name="Theme.BulkCompressor" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/nothing_black</item>
+        <item name="android:colorBackground">@color/nothing_black</item>
+        <item name="android:textColorPrimary">@color/nothing_white</item>
+        <item name="android:textColorSecondary">@color/nothing_grey</item>
+        <item name="colorAccent">@color/nothing_accent</item>
+        <item name="colorPrimary">@color/nothing_accent</item>
+        <item name="android:statusBarColor">@color/nothing_black</item>
+        <item name="android:navigationBarColor">@color/nothing_black</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:textColorHint">@color/nothing_dim</item>
+        <item name="android:seekBarStyle">@style/SeekBar.BulkCompressor</item>
+    </style>
+
+    <style name="SeekBar.BulkCompressor" parent="Widget.AppCompat.SeekBar">
+        <item name="android:progressTint">@color/nothing_white</item>
+        <item name="android:progressBackgroundTint">@color/nothing_outline</item>
+        <item name="android:thumbTint">@color/nothing_white</item>
+    </style>
+
+
+    <style name="SectionLabel">
+        <item name="android:textSize">10sp</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:letterSpacing">0.2</item>
+        <item name="android:textColor">@color/nothing_dim</item>
+    </style>
+
+    <style name="ValueLabel">
+        <item name="android:textSize">10sp</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:letterSpacing">0.1</item>
+        <item name="android:textColor">@color/nothing_white</item>
+    </style>
+</resources>

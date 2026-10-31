@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Gesichert werden nur die Einstellungen. Die Medien selbst liegen
+    ausserhalb der App und werden nie kopiert. Sobald ein <include>
+    vorhanden ist, gilt nur noch diese Liste.
+-->
+<full-backup-content>
+    <include domain="sharedpref" path="bulk_compressor_settings.xml" />
+</full-backup-content>

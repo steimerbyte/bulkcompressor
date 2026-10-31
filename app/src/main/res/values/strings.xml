@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Bulk Compressor</string>
+
+    <string name="main_headline">Bulk Compressor</string>
+    <string name="main_sub">Ein Ordner, alle Videos und Bilder. Komprimiert wird an Ort und Stelle: gleicher Dateiname, gleicher Ordner, gleiche Zeit – die Galerie bleibt in ihrer Reihenfolge.</string>
+
+    <string name="label_folder">ORDNER</string>
+    <string name="folder_none">Kein Ordner gewählt</string>
+    <string name="button_pick">Ordner wählen</string>
+    <string name="scan_scanning">Ordner wird gelesen …</string>
+    <string name="scan_empty">Keine Videos oder Bilder gefunden.</string>
+    <string name="scan_summary">%1$d Videos · %2$d Bilder · %3$s</string>
+    <string name="scan_truncated"> · Liste begrenzt</string>
+
+    <string name="label_video">VIDEO</string>
+    <string name="label_mode">MODUS</string>
+    <string name="label_bitrate">BITRATE</string>
+    <string name="label_resolution">AUFLÖSUNG</string>
+    <string name="label_codec">CODEC</string>
+    <string name="label_images">BILDER</string>
+    <string name="label_quality">QUALITÄT</string>
+    <string name="label_format">FORMAT</string>
+    <string name="label_output">AUSGABE</string>
+
+    <string name="mode_bitrate">BITRATE</string>
+    <string name="mode_scale">AUFLÖSUNG</string>
+    <string name="mode_both">BEIDES</string>
+
+    <string name="res_original">ORIGINAL</string>
+    <string name="res_4k">4K</string>
+    <string name="res_1440">1440p</string>
+    <string name="res_1080">1080p</string>
+    <string name="res_720">720p</string>
+    <string name="res_480">480p</string>
+
+    <string name="codec_auto">AUTO</string>
+    <string name="codec_avc">H.264</string>
+    <string name="codec_hevc">H.265</string>
+
+    <string name="format_keep">BEHALTEN</string>
+    <string name="format_jpeg">JPEG</string>
+    <string name="format_webp">WEBP</string>
+
+    <string name="output_overwrite">ORIGINAL ERSETZEN</string>
+    <string name="output_keep">ORIGINAL BEHALTEN</string>
+    <string name="toggle_timestamps">Zeitstempel der Datei erhalten</string>
+    <string name="toggle_exif">EXIF-Daten übernehmen</string>
+    <string name="output_hint_overwrite">Die Datei wird an ihrem Platz ersetzt. Name, Ordner und Galerie-Eintrag bleiben, deshalb rutscht nichts in der Zeitleiste.</string>
+    <string name="output_hint_keep">Neben dem Original entsteht eine zweite Datei mit dem Zusatz „_compressed“. Originale bleiben unberührt.</string>
+
+    <string name="access_needed">Android kann den Änderungszeitstempel nur über den Dateipfad zurücksetzen. Ohne „Zugriff auf alle Dateien“ tragen komprimierte Dateien das Datum der Bearbeitung – im Galerie-Verlauf rutschen sie damit nach oben.</string>
+    <string name="access_grant">Zugriff auf alle Dateien freigeben</string>
+
+    <string name="button_start">Start</string>
+    <string name="button_cancel">Abbrechen</string>
+    <string name="action_cancel">Abbrechen</string>
+    <string name="progress_preparing">Vorbereitung …</string>
+    <string name="log_title">PROTOKOLL</string>
+    <string name="footer">● OFFLINE · KEIN NETZWERKZUGRIFF</string>
+    <string name="estimate_unknown">Erwartung erscheint nach dem Einlesen</string>
+
+    <string name="error_no_folder">Bitte zuerst einen Ordner wählen</string>
+    <string name="error_no_selection">Keine Dateien ausgewählt</string>
+    <string name="error_permission">Ordnerzugriff abgelaufen – bitte neu wählen</string>
+
+    <string name="channel_name">Komprimierung</string>
+    <string name="channel_description">Fortschritt beim Verkleinern mehrerer Dateien</string>
+</resources>

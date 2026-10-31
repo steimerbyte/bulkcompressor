@@ -1,0 +1,15 @@
+# Build-Artefakte
+.gradle/
+.kotlin/
+build/
+app/build/
+local.properties
+
+# Signing-Material: NIEMALS committen
+*.keystore
+*.jks
+keystore.properties
+
+# APK wird bewusst NICHT committet - per Release-Artefakt bereitstellen
+*.apk
+*.idsig

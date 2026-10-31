@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Nothing-OS-Palette: reines Schwarz, reines Weiss, ein Akzent. -->
+    <color name="nothing_black">#FF000000</color>
+    <color name="nothing_white">#FFFFFFFF</color>
+    <color name="nothing_grey">#FF9A9A9A</color>
+    <color name="nothing_dim">#FF6B6B6B</color>
+    <color name="nothing_surface">#FF111111</color>
+    <color name="nothing_outline">#FF2A2A2A</color>
+    <color name="nothing_accent">#FFFFFFFF</color>
+    <!-- Nur fuer den Hinweis, dass Originale ersetzt werden. -->
+    <color name="nothing_red">#FFD71921</color>
+</resources>

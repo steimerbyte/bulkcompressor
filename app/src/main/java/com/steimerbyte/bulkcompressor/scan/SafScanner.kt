@@ -5,6 +5,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.provider.DocumentsContract
 import com.steimerbyte.bulkcompressor.engine.Naming
+import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.model.MediaItem
 import com.steimerbyte.bulkcompressor.model.MediaKind
 import com.steimerbyte.bulkcompressor.model.ScanResult
@@ -22,8 +23,13 @@ class SafScanner(private val resolver: ContentResolver) {
     data class Progress(val folders: Int, val files: Int)
 
     fun scan(treeUri: Uri, onProgress: (Progress) -> Unit = {}): ScanResult {
-        val rootId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
-            ?: return ScanResult(emptyList(), 0, false)
+        val root = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }
+        val rootId = root.getOrNull()
+        if (rootId == null) {
+            Log.w("Scan", "Wurzelordner nicht lesbar: $treeUri", root.exceptionOrNull())
+            return ScanResult(emptyList(), 0, false)
+        }
+        Log.i("Scan", "Start: $treeUri")
 
         val items = ArrayList<MediaItem>(256)
         val queue = ArrayDeque<String>()
@@ -83,6 +89,20 @@ class SafScanner(private val resolver: ContentResolver) {
         }
 
         items.sortWith(compareBy({ it.kind }, { it.displayName.lowercase() }))
+        val videos = items.count { it.kind == MediaKind.VIDEO }
+        val bytes = items.sumOf { it.sizeBytes }
+        Log.i(
+            "Scan",
+            "Fertig: $folders Ordner · $videos Videos · ${items.size - videos} Bilder · $bytes B" +
+                " · $skipped uebersprungen" +
+                if (truncated) " · durch Grenze abgeschnitten" else ""
+        )
+        if (truncated) {
+            Log.w(
+                "Scan",
+                "Grenze erreicht: MAX_FILES=$MAX_FILES / MAX_FOLDERS=$MAX_FOLDERS - Rest nicht gelesen"
+            )
+        }
         return ScanResult(items, folders, truncated, skipped)
     }
 
@@ -108,7 +128,12 @@ class SafScanner(private val resolver: ContentResolver) {
 
         var cursor: Cursor? = null
         try {
-            cursor = resolver.query(childrenUri, projection, null, null, null) ?: return result
+            val query = resolver.query(childrenUri, projection, null, null, null)
+            if (query == null) {
+                Log.w("Scan", "Ordner nicht lesbar (kein Cursor): $folderId")
+                return result
+            }
+            cursor = query
             val idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
             val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
             val mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
@@ -136,6 +161,7 @@ class SafScanner(private val resolver: ContentResolver) {
         } catch (t: Throwable) {
             // Ein nicht lesbarer Unterordner darf den ganzen Lauf nicht
             // verhindern (z. B. geloeschter Ordner oder fehlende Rechte).
+            Log.w("Scan", "Ordner nicht lesbar: $folderId", t)
         } finally {
             cursor?.close()
         }

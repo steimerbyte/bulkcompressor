@@ -29,6 +29,15 @@
         <item name="android:textColor">@color/nothing_dim</item>
     </style>
 
+    <!-- Rechts neben einer Abschnittsueberschrift: zeigt, ob der
+         Abschnitt mit der aktuellen Auswahl ueberhaupt wirkt. -->
+    <style name="StatusLabel">
+        <item name="android:textSize">9sp</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:letterSpacing">0.16</item>
+        <item name="android:textColor">@color/nothing_dim</item>
+    </style>
+
     <style name="ValueLabel">
         <item name="android:textSize">10sp</item>
         <item name="android:fontFamily">monospace</item>

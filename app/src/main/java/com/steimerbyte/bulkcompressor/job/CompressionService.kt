@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.steimerbyte.bulkcompressor.MainActivity
 import com.steimerbyte.bulkcompressor.R
+import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.model.CompressSettings
 import com.steimerbyte.bulkcompressor.scan.SafScanner
 import java.util.concurrent.atomic.AtomicBoolean
@@ -37,6 +38,7 @@ class CompressionService : Service(), JobBus.Listener {
 
     override fun onCreate() {
         super.onCreate()
+        Log.i("Service", "onCreate")
         createChannel()
         JobBus.addListener(this)
     }
@@ -44,25 +46,36 @@ class CompressionService : Service(), JobBus.Listener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                if (worker?.isAlive == true) return START_NOT_STICKY
+                if (worker?.isAlive == true) {
+                    Log.d("Service", "Start ignoriert: es laeuft bereits ein Auftrag")
+                    return START_NOT_STICKY
+                }
                 val tree = intent.getStringExtra(EXTRA_TREE)
                 val docIds = intent.getStringArrayListExtra(EXTRA_DOC_IDS).orEmpty()
                 if (tree == null || docIds.isEmpty()) {
+                    Log.w(
+                        "Service",
+                        "Start ohne Ordner oder Dateien verworfen (tree=$tree, Dateien=${docIds.size})"
+                    )
                     stopSelf()
                     return START_NOT_STICKY
                 }
+                Log.i("Service", "Start: ${docIds.size} Dateien · $tree")
                 startForegroundNow()
                 launchWorker(Uri.parse(tree), docIds)
             }
             ACTION_CANCEL -> {
+                Log.i("Service", "Abbruch angefordert")
                 cancelled.set(true)
                 if (worker?.isAlive == true) {
                     notify("Wird abgebrochen ...", null, 0, false)
                 } else {
                     // Kein Lauf, kein Abbruch: den Dienst nicht laufen lassen.
+                    Log.d("Service", "Abbruch ohne laufenden Auftrag - Dienst wird beendet")
                     stopSelf()
                 }
             }
+            else -> Log.w("Service", "Unbekannter Auftrag: ${intent?.action}")
         }
         return START_NOT_STICKY
     }
@@ -78,12 +91,20 @@ class CompressionService : Service(), JobBus.Listener {
                 val scan = SafScanner(contentResolver).scan(treeUri)
                 val wanted = docIds.toHashSet()
                 val items = scan.items.filter { it.docId in wanted }
+                Log.d("Service", "Scan: ${scan.items.size} Dateien in ${scan.folderCount} Ordnern")
+                if (items.size != docIds.size) {
+                    Log.w(
+                        "Service",
+                        "Nur ${items.size} von ${docIds.size} gewaehlten Dateien wiedergefunden"
+                    )
+                }
                 val settings = CompressSettings.load(
                     getSharedPreferences(CompressSettings.PREFS, MODE_PRIVATE)
                 )
                 CompressionJob(applicationContext, treeUri, items, settings, cancelled).run()
             } catch (t: Throwable) {
                 JobBus.appendLog("ABBRUCH: ${t.message ?: t.javaClass.simpleName}")
+                Log.e("Service", "Lauf abgebrochen", t)
                 JobBus.publish(
                     JobBus.state.copy(running = false, finished = true, overall = 0f)
                 )
@@ -197,16 +218,27 @@ class CompressionService : Service(), JobBus.Listener {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT < 26) return
         val manager = getSystemService(NotificationManager::class.java)
-        if (manager.getNotificationChannel(CHANNEL_ID) != null) return
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            getString(R.string.channel_name),
-            NotificationManager.IMPORTANCE_LOW
-        ).apply {
-            description = getString(R.string.channel_description)
-            setShowBadge(false)
+        // Ein fehlender Kanal ist ein echter Fehler und wird protokolliert,
+        // aber nicht verschluckt: der Aufruf soll sich verhalten wie bisher.
+        try {
+            if (manager.getNotificationChannel(CHANNEL_ID) != null) {
+                Log.d("Service", "Notification-Kanal vorhanden")
+                return
+            }
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                getString(R.string.channel_name),
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = getString(R.string.channel_description)
+                setShowBadge(false)
+            }
+            manager.createNotificationChannel(channel)
+            Log.d("Service", "Notification-Kanal angelegt")
+        } catch (t: Throwable) {
+            Log.w("Service", "Notification-Kanal nicht anlegbar", t)
+            throw t
         }
-        manager.createNotificationChannel(channel)
     }
 
     // ------------------------------------------------------------------
@@ -217,16 +249,34 @@ class CompressionService : Service(), JobBus.Listener {
         val power = getSystemService(Context.POWER_SERVICE) as PowerManager
         val lock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "bulkcompressor:job")
         lock.setReferenceCounted(false)
-        lock.acquire(6 * 60 * 60 * 1000L)
+        try {
+            lock.acquire(WAKE_LOCK_TIMEOUT_MS)
+        } catch (t: Throwable) {
+            Log.w("Service", "Wachhund konnte nicht erworben werden", t)
+            throw t
+        }
+        if (lock.isHeld) {
+            Log.d("Service", "Wachhund erworben (${WAKE_LOCK_TIMEOUT_MS / 60_000} min)")
+        } else {
+            Log.w("Service", "Wachhund nach acquire nicht gehalten - Lauf kann einfrieren")
+        }
         wakeLock = lock
     }
 
     private fun releaseWakeLock() {
-        runCatching { if (wakeLock?.isHeld == true) wakeLock?.release() }
+        val lock = wakeLock
         wakeLock = null
+        if (lock == null) return
+        if (!lock.isHeld) {
+            Log.w("Service", "Wachhund war nicht mehr gehalten - Zeitlimit abgelaufen?")
+            return
+        }
+        runCatching { lock.release() }
+            .onFailure { Log.w("Service", "Wachhund liess sich nicht freigeben", it) }
     }
 
     override fun onDestroy() {
+        Log.i("Service", "onDestroy")
         cancelled.set(true)
         JobBus.removeListener(this)
         releaseWakeLock()
@@ -240,6 +290,9 @@ class CompressionService : Service(), JobBus.Listener {
         const val EXTRA_DOC_IDS = "doc_ids"
         private const val CHANNEL_ID = "compression"
         private const val NOTIFICATION_ID = 4711
+
+        /** Zeitlimit des Wachhunds: danach gibt Android die Sperre selbst frei. */
+        private const val WAKE_LOCK_TIMEOUT_MS = 6 * 60 * 60 * 1000L
 
         fun start(context: Context, treeUri: Uri, docIds: List<String>) {
             val intent = Intent(context, CompressionService::class.java)

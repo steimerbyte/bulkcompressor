@@ -11,6 +11,7 @@ import android.media.MediaMuxer
 import android.net.Uri
 import android.util.Range
 import android.view.Surface
+import com.steimerbyte.bulkcompressor.log.Log
 import java.io.File
 import java.nio.ByteBuffer
 import java.util.concurrent.TimeUnit
@@ -95,6 +96,12 @@ class VideoTranscoder(private val context: Context) {
                     ?.toFloatOrNull()?.toInt() ?: 0
             }
             if (width <= 0 || height <= 0) throw TranscodeException("Aufloesung nicht ermittelbar")
+            Log.i(
+                "Video",
+                "Probe: ${width}x${height} · Drehung $rotation°" +
+                    " · ${if (frameRate > 0) frameRate else 30} fps · ${bitrate / 1000} kbit/s" +
+                    " · $mimeType · Ton ${audioMime ?: "keine"} · ${duration / 1000} s"
+            )
             return VideoSourceInfo(
                 width = width,
                 height = height,
@@ -151,6 +158,13 @@ class VideoTranscoder(private val context: Context) {
             } else {
                 normalizeRotation(orientationHint)
             }
+            Log.i(
+                "Video",
+                "Transcode ${target.name}: ${plan.width}x${plan.height} @ ${plan.bitrate / 1000} kbit/s" +
+                    " · ${plan.frameRate} fps · ${plan.codecMime} · Drehung $rotation°" +
+                    " · Tonspur ${if (audioTrackIndex >= 0) "vorhanden" else "keine"}" +
+                    " · Clip ${durationMs / 1000} s"
+            )
 
             val started = startEncoder(plan)
             val encoder = started.codec
@@ -175,6 +189,7 @@ class VideoTranscoder(private val context: Context) {
                         try {
                             writeAudio(uri, index, session) { abort.get() || isCancelled() }
                         } catch (t: Throwable) {
+                            Log.e("Video", "Tonspur fehlgeschlagen", t)
                             session.fail(t)
                         }
                     }, "audio-tonspur")
@@ -183,18 +198,40 @@ class VideoTranscoder(private val context: Context) {
 
                 transcodeVideo(extractor, decoder, encoder, session, durationMs, onProgress, isCancelled)
                 audioThread?.join(10_000)
+                if (audioThread?.isAlive == true) {
+                    Log.w("Video", "Tonspur-Thread nach 10 s noch aktiv - Tonspur abgeschnitten")
+                }
                 session.rethrowFailure()
+                val frames = session.videoFrameCount()
+                val audioBytes = session.audioByteCount()
+                if (frames <= 0) {
+                    Log.w("Video", "keine Videoframes gemuxt - Ausgabe ist leer")
+                }
+                if (audioTrackIndex >= 0 && audioBytes <= 0L) {
+                    Log.w("Video", "Tonspur vorhanden, aber 0 Audiobytes gemuxt")
+                }
+                Log.i(
+                    "Video",
+                    "gemuxt: $frames Frames · $audioBytes B Audio · ${target.length()} B Datei"
+                )
                 return fitted
             } finally {
                 abort.set(true)
-                runCatching { audioThread?.join(2_000) }
-                runCatching { decoder?.stop() }
-                runCatching { decoder?.release() }
-                runCatching { encoder.stop() }
-                runCatching { encoder.release() }
-                runCatching { started.surface.release() }
+                quiet("Audio-Thread.join") { audioThread?.join(2_000) }
+                quiet("Decoder.stop") { decoder?.stop() }
+                quiet("Decoder.release") { decoder?.release() }
+                quiet("Video-Encoder.stop") { encoder.stop() }
+                quiet("Video-Encoder.release") { encoder.release() }
+                quiet("Surface.release") { started.surface.release() }
                 session.release()
             }
+        } catch (t: JobCancelledException) {
+            Log.i("Video", "Transcode ${target.name} abgebrochen (Nutzer)")
+            throw t
+        } catch (t: Throwable) {
+            // Weiterreichen wie bisher, aber mit Dateibezug im Protokoll.
+            Log.e("Video", "Transcode ${target.name} fehlgeschlagen", t)
+            throw t
         } finally {
             extractor.release()
         }
@@ -270,7 +307,14 @@ class VideoTranscoder(private val context: Context) {
                     if (!untilEos) return
                 }
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    session.addVideoTrack(encoder.outputFormat)
+                    val outputFormat = encoder.outputFormat
+                    Log.d(
+                        "Video",
+                        "Encoder-Format: ${outputFormat.getString(MediaFormat.KEY_MIME)}" +
+                            " · Profil ${formatValue(outputFormat, MediaFormat.KEY_PROFILE)}" +
+                            " · Level ${formatValue(outputFormat, MediaFormat.KEY_LEVEL)}"
+                    )
+                    session.addVideoTrack(outputFormat)
                 }
                 index >= 0 -> {
                     val buffer = encoder.getOutputBuffer(index)
@@ -303,10 +347,16 @@ class VideoTranscoder(private val context: Context) {
             extractor.setDataSource(context, uri, null)
             extractor.selectTrack(trackIndex)
             val format = extractor.getTrackFormat(trackIndex)
-            val mime = format.getString(MediaFormat.KEY_MIME) ?: return
+            val mime = format.getString(MediaFormat.KEY_MIME)
+            if (mime == null) {
+                Log.w("Video", "Tonspur ohne MIME-Typ - wird nicht gemuxt")
+                return
+            }
             if (mime == AUDIO_AAC) {
+                Log.d("Video", "Tonspur: $mime wird durchgereicht")
                 passthroughAudio(extractor, format, session, isCancelled)
             } else {
+                Log.d("Video", "Tonspur: $mime wird nach AAC LC neu kodiert")
                 transcodeAudio(extractor, format, mime, session, isCancelled)
             }
         } finally {
@@ -448,6 +498,9 @@ class VideoTranscoder(private val context: Context) {
                         ) {
                             encoded.position(encoderInfo.offset)
                             encoded.limit(encoderInfo.offset + encoderInfo.size)
+                            if (encoderTrack < 0) {
+                                Log.w("Video", "Audiospur ohne Muxer-Track - writeSampleData folgt trotzdem")
+                            }
                             session.writeAudio(encoderTrack, encoded, encoderInfo)
                         }
                         encoder.releaseOutputBuffer(encodedIndex, false)
@@ -458,10 +511,10 @@ class VideoTranscoder(private val context: Context) {
                 }
             }
         } finally {
-            runCatching { decoder.stop() }
-            runCatching { decoder.release() }
-            runCatching { encoder.stop() }
-            runCatching { encoder.release() }
+            quiet("Audio-Decoder.stop") { decoder.stop() }
+            quiet("Audio-Decoder.release") { decoder.release() }
+            quiet("Audio-Encoder.stop") { encoder.stop() }
+            quiet("Audio-Encoder.release") { encoder.release() }
         }
     }
 
@@ -499,16 +552,54 @@ class VideoTranscoder(private val context: Context) {
                 codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 surface = codec.createInputSurface()
                 codec.start()
+                Log.i(
+                    "Video",
+                    "Encoder gewaehlt: ${codec.name} · $mime · ${fitted.width}x${fitted.height}" +
+                        " @ ${fitted.bitrate / 1000} kbit/s · ${fitted.frameRate} fps" +
+                        " · ${hardwareLabel(codec)} · maxInstances=${maxInstances(codec, mime)}" +
+                        if (fitted != plan) " · an Encoder-Grenzen angepasst" else ""
+                )
                 return StartedEncoder(codec, surface, fitted)
             } catch (t: Throwable) {
                 lastError = t
+                Log.w("Video", "Encoder $mime nicht nutzbar - naechster Versuch", t)
                 runCatching { surface?.release() }
                 runCatching { codec?.release() }
             }
         }
+        Log.e("Video", "Kein Video-Encoder verfuegbar (versucht: $candidates)", lastError)
         throw TranscodeException(
             "Kein Video-Encoder verfuegbar (${lastError?.message ?: "unbekannt"})"
         )
+    }
+
+    /** Grobe Einordnung des Codecs fuer das Protokoll. */
+    @Suppress("DEPRECATION")
+    private fun hardwareLabel(codec: MediaCodec): String =
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            if (codec.codecInfo.isHardwareAccelerated) "Hardware" else "Software"
+        } else "Codec-Art unbekannt"
+
+    /** Wie viele Instanzen der Encoder gleichzeitig erlaubt; -1 wenn nicht abrufbar. */
+    @Suppress("DEPRECATION")
+    private fun maxInstances(codec: MediaCodec, mime: String): Int = runCatching {
+        codec.codecInfo.getCapabilitiesForType(mime).maxSupportedInstances
+    }.getOrDefault(-1)
+
+    /** Zahl aus dem Format als Text; "-" wenn der Codec sie nicht meldet. */
+    private fun formatValue(format: MediaFormat, key: String): String =
+        if (format.containsKey(key)) format.getInteger(key).toString() else "-"
+
+    /**
+     * Fuehrt einen Aufraeumschritt aus und protokolliert einen Fehler,
+     * ohne ihn weiterzureichen - das Verhalten bleibt wie bisher.
+     */
+    private fun quiet(label: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (t: Throwable) {
+            Log.w("Video", "$label fehlgeschlagen", t)
+        }
     }
 
     /**
@@ -599,6 +690,8 @@ class VideoTranscoder(private val context: Context) {
         private var audioBase = Long.MIN_VALUE
         private var lastVideoUs = -1L
         private var lastAudioUs = -1L
+        private var videoFrames = 0
+        private var audioBytes = 0L
 
         init {
             if (orientation != 0) muxer.setOrientationHint(orientation)
@@ -641,15 +734,25 @@ class VideoTranscoder(private val context: Context) {
             if (pendingTracks <= 0 && !started) {
                 muxer.start()
                 started = true
+                Log.d("Video", "Muxer gestartet (Video-Track $videoTrack, Audio-Track $audioTrack)")
                 ready.signalAll()
             }
         }
 
         private fun awaitStartLocked() {
+            var waitedMs = 0L
             while (!started) {
                 failure?.let { throw it }
                 if (released) throw TranscodeException("Muxer bereits geschlossen")
                 ready.await(50, TimeUnit.MILLISECONDS)
+                waitedMs += 50
+                if (waitedMs == AWAIT_WARN_MS) {
+                    Log.w(
+                        "Video",
+                        "Muxer wartet seit ${AWAIT_WARN_MS / 1000} s auf eine fehlende Spur" +
+                            " (offen: $pendingTracks)"
+                    )
+                }
             }
         }
 
@@ -664,6 +767,7 @@ class VideoTranscoder(private val context: Context) {
                 lastVideoUs = timestamp
                 info.presentationTimeUs = timestamp
                 muxer.writeSampleData(videoTrack, buffer, info)
+                videoFrames++
             }
         }
 
@@ -678,17 +782,40 @@ class VideoTranscoder(private val context: Context) {
                 lastAudioUs = timestamp
                 info.presentationTimeUs = timestamp
                 muxer.writeSampleData(track, buffer, info)
+                audioBytes += info.size.toLong()
             }
         }
+
+        /** Anzahl der tatsaechlich geschriebenen Videoframes. */
+        fun videoFrameCount(): Int = lock.withLock { videoFrames }
+
+        /** Summe der geschriebenen Audiobytes. */
+        fun audioByteCount(): Long = lock.withLock { audioBytes }
 
         fun release() {
             lock.withLock {
                 if (released) return
                 released = true
                 ready.signalAll()
-                runCatching { if (started) muxer.stop() }
-                runCatching { muxer.release() }
+                if (!started) {
+                    Log.w("Video", "Muxer nie gestartet - Ausgabedatei bleibt ohne Spuren")
+                }
+                try {
+                    if (started) muxer.stop()
+                } catch (t: Throwable) {
+                    Log.w("Video", "Muxer.stop fehlgeschlagen", t)
+                }
+                try {
+                    muxer.release()
+                } catch (t: Throwable) {
+                    Log.w("Video", "Muxer.release fehlgeschlagen", t)
+                }
             }
+        }
+
+        private companion object {
+            /** Ab dieser Wartezeit gilt eine Muxer-Spur als haengend. */
+            const val AWAIT_WARN_MS = 5_000L
         }
     }
 

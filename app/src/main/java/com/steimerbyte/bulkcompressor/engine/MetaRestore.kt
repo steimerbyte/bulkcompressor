@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.exifinterface.media.ExifInterface
+import com.steimerbyte.bulkcompressor.log.Log
 import java.io.File
 
 /**
@@ -72,12 +73,29 @@ object MetaRestore {
      *         steht (Toleranz 2 s, weil manche Dateisysteme runden).
      */
     fun applyTimestamp(resolver: ContentResolver, uri: Uri, millis: Long): Boolean {
-        if (millis <= 0L) return false
-        val path = filesystemPath(uri) ?: return false
+        if (millis <= 0L) {
+            Log.d("Meta", "Zeitstempel uebersprungen: kein Wert vorhanden ($uri)")
+            return false
+        }
+        val path = filesystemPath(uri)
+        if (path == null) {
+            Log.w("Meta", "Zeitstempel nicht setzbar: kein Dateipfad fuer $uri (Quelle: SAF-setLastModified)")
+            return false
+        }
         val file = File(path)
-        if (!runCatching { file.setLastModified(millis) }.getOrDefault(false)) return false
+        val applied = runCatching { file.setLastModified(millis) }
+        if (!applied.getOrDefault(false)) {
+            Log.w("Meta", "Zeitstempel: setLastModified fehlgeschlagen ($path)", applied.exceptionOrNull())
+            return false
+        }
         val actual = runCatching { file.lastModified() }.getOrDefault(0L)
-        return actual > 0L && kotlin.math.abs(actual - millis) <= 2_000L
+        val ok = actual > 0L && kotlin.math.abs(actual - millis) <= 2_000L
+        if (ok) {
+            Log.d("Meta", "Zeitstempel gesetzt: ${file.name} · $millis ms (Quelle: SAF-setLastModified)")
+        } else {
+            Log.w("Meta", "Zeitstempel nicht uebernommen: ${file.name} · erwartet $millis, gelesen $actual")
+        }
+        return ok
     }
 
     /**
@@ -107,24 +125,47 @@ object MetaRestore {
      * an die falsche Stelle der Zeitleiste.
      */
     fun copyExif(resolver: ContentResolver, source: Uri, target: File, copy: Boolean): Boolean {
-        if (!copy || !target.exists()) return false
-        val targetExif = runCatching { ExifInterface(target.absolutePath) }.getOrNull()
-            ?: return false
+        if (!copy || !target.exists()) {
+            Log.d(
+                "Meta",
+                "EXIF uebersprungen: " + if (!copy) "ausgeschaltet" else "Zieldatei fehlt ($target)"
+            )
+            return false
+        }
+        val targetResult = runCatching { ExifInterface(target.absolutePath) }
+        val targetExif = targetResult.getOrNull()
+        if (targetExif == null) {
+            Log.w("Meta", "EXIF: Zieldatei nicht lesbar ($target)", targetResult.exceptionOrNull())
+            return false
+        }
         val descriptor = runCatching { resolver.openFileDescriptor(source, "r") }.getOrNull()
-            ?: return false
+        if (descriptor == null) {
+            Log.w("Meta", "EXIF: Quelle nicht lesbar ($source)")
+            return false
+        }
 
+        var copiedTags = 0
         descriptor.use { pfd ->
             val sourceExif = runCatching { ExifInterface(pfd.fileDescriptor) }.getOrNull()
-                ?: return false
+            if (sourceExif == null) {
+                Log.w("Meta", "EXIF: Quelldaten nicht lesbar ($source)")
+                return false
+            }
             for (tag in COPIED_TAGS) {
                 val value = runCatching { sourceExif.getAttribute(tag) }.getOrNull() ?: continue
-                runCatching { targetExif.setAttribute(tag, value) }
+                if (runCatching { targetExif.setAttribute(tag, value) }.isSuccess) copiedTags++
             }
         }
 
         // Die Drehung ist beim Neu-Encoding in die Pixel gerechnet worden,
         // deshalb steht das Feld danach auf "normal".
         targetExif.setAttribute(ExifInterface.TAG_ORIENTATION, OrientationUtil.NORMAL.toString())
-        return runCatching { targetExif.saveAttributes() }.isSuccess
+        val saved = runCatching { targetExif.saveAttributes() }
+        if (saved.isFailure) {
+            Log.w("Meta", "EXIF nicht speicherbar: ${target.name}", saved.exceptionOrNull())
+            return false
+        }
+        Log.d("Meta", "EXIF zurueckgeschrieben: ${target.name} · $copiedTags Felder · Drehung normal")
+        return true
     }
 }

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Texte des Live-Terminals. Eigene Datei, damit parallele Arbeit an
+    strings.xml nicht kollidiert.
+-->
+<resources>
+
+    <!-- Leiste -->
+    <string name="terminal_title">TERMINAL</string>
+    <string name="terminal_chevron">^</string>
+    <string name="terminal_chevron_expanded">v</string>
+    <string name="terminal_new_indicator">v NEU</string>
+    <plurals name="terminal_line_count">
+        <item quantity="one">%1$d Zeile</item>
+        <item quantity="other">%1$d Zeilen</item>
+    </plurals>
+
+    <!-- Inhalt -->
+    <string name="terminal_empty">— noch keine Ausgabe —</string>
+
+    <!-- Toolbar im ausgeklappten Zustand -->
+    <string name="terminal_action_copy">KOPIEREN</string>
+    <string name="terminal_action_share">TEILEN</string>
+    <string name="terminal_action_clear">LEER</string>
+    <string name="terminal_action_close">SCHLIESSEN</string>
+
+    <!-- Zwischenablage -->
+    <string name="terminal_clip_label">Bulk Compressor – Terminal</string>
+
+</resources>

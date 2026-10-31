@@ -7,6 +7,7 @@ import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
 import androidx.exifinterface.media.ExifInterface
+import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.model.CompressSettings
 import com.steimerbyte.bulkcompressor.model.ImageFormat
 import java.io.File
@@ -59,41 +60,60 @@ class ImageCompressor(private val context: Context) {
         if (Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
 
     fun compress(source: Uri, sourceExtension: String, target: File, settings: CompressSettings): Result {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        openStream(source).use { BitmapFactory.decodeStream(it, null, bounds) }
-        val srcWidth = bounds.outWidth
-        val srcHeight = bounds.outHeight
-        if (srcWidth <= 0 || srcHeight <= 0) throw IOException("Bild nicht lesbar")
-
-        val desiredShortEdge =
-            if (settings.imageShortEdge <= 0) minOf(srcWidth, srcHeight) else settings.imageShortEdge
-        val sample = chooseSampleSize(srcWidth, srcHeight, desiredShortEdge)
-
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = sample
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-        }
-
-        val decoded = try {
-            openStream(source).use { BitmapFactory.decodeStream(it, null, options) }
-        } catch (e: OutOfMemoryError) {
-            throw IOException("Nicht genug Arbeitsspeicher fuer dieses Bild")
-        } ?: throw IOException("Bild nicht dekodierbar")
-
-        var current: Bitmap = decoded
+        val startedAt = System.currentTimeMillis()
+        val name = source.lastPathSegment ?: source.toString()
         try {
-            current = rotate(current, readOrientation(source))
-            current = downscale(current, desiredShortEdge)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            openStream(source).use { BitmapFactory.decodeStream(it, null, bounds) }
+            val srcWidth = bounds.outWidth
+            val srcHeight = bounds.outHeight
+            Log.d(
+                "Image",
+                "$name · Quelle ${srcWidth}x${srcHeight} · Format ${settings.imageFormat.name}" +
+                    " · Kurzkante " +
+                    if (settings.imageShortEdge <= 0) "original" else "${settings.imageShortEdge}px"
+            )
+            if (srcWidth <= 0 || srcHeight <= 0) throw IOException("Bild nicht lesbar")
 
-            val format = resolveFormat(settings, sourceExtension)
-            FileOutputStream(target).use { out ->
-                if (!current.compress(format.compress, settings.imageQuality, out)) {
-                    throw IOException("Bild konnte nicht geschrieben werden")
-                }
+            val desiredShortEdge =
+                if (settings.imageShortEdge <= 0) minOf(srcWidth, srcHeight) else settings.imageShortEdge
+            val sample = chooseSampleSize(srcWidth, srcHeight, desiredShortEdge)
+
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
             }
-            return Result(current.width, current.height, format)
-        } finally {
-            if (!current.isRecycled) current.recycle()
+
+            val decoded = try {
+                openStream(source).use { BitmapFactory.decodeStream(it, null, options) }
+            } catch (e: OutOfMemoryError) {
+                throw IOException("Nicht genug Arbeitsspeicher fuer dieses Bild")
+            } ?: throw IOException("Bild nicht dekodierbar")
+
+            var current: Bitmap = decoded
+            try {
+                current = rotate(current, readOrientation(source))
+                current = downscale(current, desiredShortEdge)
+
+                val format = resolveFormat(settings, sourceExtension)
+                FileOutputStream(target).use { out ->
+                    if (!current.compress(format.compress, settings.imageQuality, out)) {
+                        throw IOException("Bild konnte nicht geschrieben werden")
+                    }
+                }
+                Log.i(
+                    "Image",
+                    "$name · ${srcWidth}x${srcHeight} -> ${current.width}x${current.height}" +
+                        " · ${format.kind} · q${settings.imageQuality} · inSampleSize=$sample" +
+                        " · ${target.length()} B · ${System.currentTimeMillis() - startedAt} ms"
+                )
+                return Result(current.width, current.height, format)
+            } finally {
+                if (!current.isRecycled) current.recycle()
+            }
+        } catch (t: Throwable) {
+            Log.e("Image", "fehlgeschlagen: $name", t)
+            throw t
         }
     }
 

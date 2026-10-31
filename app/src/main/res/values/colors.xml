@@ -10,4 +10,10 @@
     <color name="nothing_accent">#FFFFFFFF</color>
     <!-- Nur fuer den Hinweis, dass Originale ersetzt werden. -->
     <color name="nothing_red">#FFD71921</color>
+    <!-- Chip-Rueckmeldung: Druck auf einen nicht gewaehlten Chip. -->
+    <color name="nothing_chip_pressed">#FF222222</color>
+    <!-- Umriss einer Chip-Reihe, die gerade nicht wirkt (kaum sichtbar). -->
+    <color name="nothing_outline_faint">#FF1A1A1A</color>
+    <!-- Fuellung eines wirkungslosen Chips: keine Flaeche, nur Umriss. -->
+    <color name="nothing_transparent">#00000000</color>
 </resources>

@@ -1,10 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Auswahl-Chip: gefuellt = gewaehlt, Umriss = nicht gewaehlt. -->
+<!--
+  Auswahl-Chip mit drei Zustaenden, allein aus dem View-State:
+
+  1. state_selected        -> gefuellte weisse Flaeche, schwarze Schrift
+  2. state_enabled=false   -> inaktive Reihe: keine Flaeche, nur eine sehr
+                              schwache 1dp-Outline. Steht bewusst vor
+                              state_selected, damit eine inaktive Reihe auch
+                              gewaehlte Chips zuruecknimmt - die Auswahl bleibt
+                              dabei in isSelected gespeichert.
+  3. state_pressed         -> kurze Rueckmeldung fuer nicht gewaehlte Chips
+  4. sonst                 -> Surface mit 1dp-Outline
+
+  Alle drei Zustaende haben dieselbe 1dp-Kante und dieselben Ecken, damit ein
+  Zustandswechsel nur Farben tauscht und das Layout nicht springt.
+-->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_enabled="false">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/nothing_transparent" />
+            <corners android:radius="10dp" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/nothing_outline_faint" />
+        </shape>
+    </item>
     <item android:state_selected="true">
         <shape android:shape="rectangle">
             <solid android:color="@color/nothing_white" />
             <corners android:radius="10dp" />
+        </shape>
+    </item>
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/nothing_chip_pressed" />
+            <corners android:radius="10dp" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/nothing_outline" />
         </shape>
     </item>
     <item>

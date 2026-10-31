@@ -4,6 +4,40 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.1.0] – 2026-10-31
+
+### Hinzugefügt
+- **Logdatei**: Jede Zeile, die die App ausgibt, wird zusätzlich in
+  `filesDir/logs/app.log` geschrieben (Ringpuffer 2000 Zeilen in der App,
+  Datei rotiert bei 512 kB mit drei Generationen) und ins Logcat
+  gespiegelt.
+- **Absturzprotokoll**: `CrashGuard` hängt sich an den
+  Standard-Exception-Handler und schreibt vor dem Prozessende
+  Geräte-/Versionskopf, die letzten 200 Logzeilen und den vollständigen
+  Stacktrace nach `logs/crash.log`. Die Datei überlebt den Absturz und
+  wird über den Teilen-Knopf des Terminals verschickt.
+- **Live-Terminal**: Ausklappbares Panel am unteren Rand, das die
+  Logzeilen farbcodiert streamt. Ziehen am Griff ändert die Höhe
+  (zugeklappt / 264dp / 75 %), Auto-Scroll pausiert beim Hochscrollen,
+  Knöpfe für Kopieren, Teilen, Leeren und Schließen.
+- **Aktive Konfiguration**: Karte über dem Startknopf, die alle
+  wirksamen Einstellungen in drei Zeilen zusammenfasst (Video, Bilder,
+  Ausgabe).
+- **Statusmarken**: Rechts neben `VIDEO`, `BILDER`, `BITRATE` und
+  `AUFLÖSUNG` steht, ob der Abschnitt mit der aktuellen Auswahl und dem
+  aktuellen Modus wirkt (`● AKTIV` / `— INAKTIV` /
+  `— NICHTS AUSGEWÄHLT`). Nicht wirksame Bedienelemente werden
+  zurückgenommen und sind nicht bedienbar; die Auswahl bleibt dabei
+  gespeichert.
+
+### Geändert
+- Der kleine Protokolltext im Fortschrittsblock ist entfallen – dieselben
+  Meldungen laufen jetzt durch das Terminal und die Logdatei.
+- Chips sind auch ohne Farbwahrnehmung unterscheidbar (gewählt: fette
+  Monospace-Schrift mit weiterer Laufweite), inaktive Zeilen sind
+  ausgegraut und nicht klickbar.
+- `versionCode` 2, `versionName` 1.1.0.
+
 ## [1.0.0] – 2026-10-31
 
 Erste Fassung.

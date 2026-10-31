@@ -23,8 +23,8 @@ android {
         // braucht nicht mehr als MediaCodec + MediaMuxer (API 18+).
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     signingConfigs {
@@ -59,6 +59,10 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
@@ -70,4 +74,7 @@ dependencies {
     // erhalten bleibt (Aufnahmedatum, GPS, Geraet).
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     testImplementation("junit:junit:4.13.2")
+    // Oberflaeche im JVM-Test: prueft Layout-Inflation, Verkabelung und
+    // die Logdatei, ohne Geraet oder Emulator.
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }

@@ -13,6 +13,7 @@ import com.steimerbyte.bulkcompressor.engine.MetaRestore
 import com.steimerbyte.bulkcompressor.engine.Naming
 import com.steimerbyte.bulkcompressor.engine.PresetEngine
 import com.steimerbyte.bulkcompressor.engine.VideoTranscoder
+import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.model.CompressSettings
 import com.steimerbyte.bulkcompressor.model.MediaItem
 import com.steimerbyte.bulkcompressor.model.MediaKind
@@ -48,8 +49,16 @@ class CompressionJob(
     private var skipped = 0
     private val folderNames = HashMap<String, MutableSet<String>>()
     private var timestampFailureLogged = false
+    private var fileStartedAt = 0L
 
     fun run() {
+        val videoCount = items.count { it.kind == MediaKind.VIDEO }
+        val totalBytes = items.sumOf { it.sizeBytes }
+        Log.i(
+            "Job",
+            "Start: ${items.size} Dateien ($videoCount Videos, ${items.size - videoCount} Bilder," +
+                " ${formatSize(totalBytes)}) · Ziel: ${describeSettings()}"
+        )
         JobBus.publish(
             JobBus.State(
                 running = true,
@@ -64,10 +73,12 @@ class CompressionJob(
             try {
                 process(item, index)
             } catch (e: JobCancelledException) {
+                Log.i("Job", "abgebrochen vor ${item.displayName}")
                 break
             } catch (t: Throwable) {
                 failed++
-                JobBus.appendLog("FEHLER ${item.displayName}: ${t.message ?: t.javaClass.simpleName}")
+                logLine("FEHLER ${item.displayName}: ${t.message ?: t.javaClass.simpleName}")
+                Log.e("Job", "fehlgeschlagen: ${item.displayName}", t)
             }
             done = index + 1
         }
@@ -87,10 +98,23 @@ class CompressionJob(
                 currentName = ""
             )
         )
-        JobBus.appendLog(
+        logLine(
             if (cancelledNow) "Abgebrochen nach $done von ${items.size} Dateien"
             else "Fertig: $done bearbeitet, $skipped uebersprungen, $failed fehlgeschlagen"
         )
+        Log.i(
+            "Job",
+            "Summen: ${formatSize(beforeBytes)} -> ${formatSize(afterBytes)}" +
+                " (${percent(beforeBytes, afterBytes)})" +
+                " · $done bearbeitet · $skipped uebersprungen · $failed fehlgeschlagen" +
+                if (cancelledNow) " · abgebrochen" else ""
+        )
+    }
+
+    /** Haengt eine Zeile an die Oberflaeche an und spiegelt sie ins Log. */
+    private fun logLine(line: String) {
+        JobBus.appendLog(line)
+        Log.i("Job", line)
     }
 
     private fun describeSettings(): String {
@@ -106,6 +130,7 @@ class CompressionJob(
     }
 
     private fun process(item: MediaItem, index: Int) {
+        fileStartedAt = System.currentTimeMillis()
         val temp = File(context.cacheDir, "bulk_${System.currentTimeMillis()}.tmp")
         try {
             when (item.kind) {
@@ -131,9 +156,20 @@ class CompressionJob(
             sourceMime = info.videoMime,
             settings = settings
         )
+        Log.i(
+            "Job",
+            "${item.displayName} · Video · ${formatSize(item.sizeBytes)} ein · Plan:" +
+                " ${plan.width}x${plan.height} · ${plan.bitrate / 1000} kbit/s · ${plan.frameRate} fps" +
+                " · " + if (plan.codecMime == PresetEngine.MIME_HEVC) "H.265" else "H.264"
+        )
         if (plan.isNoOp) {
             skipped++
-            JobBus.appendLog("SKIP ${item.displayName}: kein Unterschied zu den Einstellungen")
+            logLine("SKIP ${item.displayName}: kein Unterschied zu den Einstellungen")
+            Log.w(
+                "Job",
+                "uebersprungen: ${item.displayName} · Grund: No-Op" +
+                    " (${plan.width}x${plan.height} ${plan.bitrate / 1000} kbit/s)"
+            )
             return
         }
 
@@ -166,6 +202,12 @@ class CompressionJob(
 
     private fun processImage(item: MediaItem, temp: File, index: Int) {
         publish(index, item.displayName, 0.3f)
+        val shortEdge = if (settings.imageShortEdge <= 0) "unveraendert" else "${settings.imageShortEdge}px"
+        Log.i(
+            "Job",
+            "${item.displayName} · Bild · ${formatSize(item.sizeBytes)} ein · Plan:" +
+                " Q${settings.imageQuality} · $shortEdge · ${settings.imageFormat.name}"
+        )
         val result = images.compress(item.uri, item.extension, temp, settings)
         publish(index, item.displayName, 0.8f)
 
@@ -192,13 +234,19 @@ class CompressionJob(
         val after = temp.length()
         if (after <= 0) {
             failed++
-            JobBus.appendLog("FEHLER ${item.displayName}: leere Ausgabedatei")
+            logLine("FEHLER ${item.displayName}: leere Ausgabedatei")
+            Log.e("Job", "fehlgeschlagen: ${item.displayName} · leere Ausgabedatei")
             return
         }
         if (after >= item.sizeBytes) {
             skipped++
-            JobBus.appendLog(
+            logLine(
                 "SKIP ${item.displayName}: Ergebnis waere ${formatSize(after)} statt ${formatSize(item.sizeBytes)}"
+            )
+            Log.w(
+                "Job",
+                "uebersprungen: ${item.displayName} · Grund: Ergebnis nicht kleiner" +
+                    " (${formatSize(after)} >= ${formatSize(item.sizeBytes)})"
             )
             return
         }
@@ -214,7 +262,8 @@ class CompressionJob(
             target = createSibling(item.parentId, mime, unique)
             if (target == null) {
                 failed++
-                JobBus.appendLog("FEHLER ${item.displayName}: Zieldatei liess sich nicht anlegen")
+                logLine("FEHLER ${item.displayName}: Zieldatei liess sich nicht anlegen")
+                Log.e("Job", "fehlgeschlagen: ${item.displayName} · Zieldatei nicht anlegbar")
                 return
             }
             writeDocument(target, temp)
@@ -225,20 +274,27 @@ class CompressionJob(
             val restored = MetaRestore.applyTimestamp(resolver, target, item.lastModified)
             if (!restored && !timestampFailureLogged) {
                 timestampFailureLogged = true
-                JobBus.appendLog(
+                logLine(
                     "HINWEIS: Aenderungszeit liess sich nicht zuruecksetzen - " +
                         "Android erlaubt das nur mit \"Zugriff auf alle Dateien\""
                 )
+                Log.w("Job", "Hinweis: Aenderungszeit nicht zurueckgesetzt (${item.displayName})")
             }
         }
         rescanLegacy(target)
 
         beforeBytes += item.sizeBytes
         afterBytes += after
-        JobBus.appendLog(
+        val savedPercent = percent(item.sizeBytes, after)
+        logLine(
             "${if (replaceInPlace) "ERSETZT" else "NEU"} ${item.displayName} · " +
                 "${formatSize(item.sizeBytes)} → ${formatSize(after)} " +
-                "(${percent(item.sizeBytes, after)}) · $details"
+                "($savedPercent) · $details"
+        )
+        Log.i(
+            "Job",
+            "fertig: ${item.displayName} · ${System.currentTimeMillis() - fileStartedAt} ms" +
+                " · ${formatSize(after)} danach · Ersparnis $savedPercent"
         )
     }
 

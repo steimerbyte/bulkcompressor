@@ -23,6 +23,8 @@ import androidx.recyclerview.widget.RecyclerView
 import com.steimerbyte.bulkcompressor.job.CompressionJob
 import com.steimerbyte.bulkcompressor.job.CompressionService
 import com.steimerbyte.bulkcompressor.job.JobBus
+import com.steimerbyte.bulkcompressor.log.Log
+import com.steimerbyte.bulkcompressor.log.LogLine
 import com.steimerbyte.bulkcompressor.model.CompressSettings
 import com.steimerbyte.bulkcompressor.model.ImageFormat
 import com.steimerbyte.bulkcompressor.model.MediaItem
@@ -35,6 +37,7 @@ import com.steimerbyte.bulkcompressor.scan.SafScanner
 import com.steimerbyte.bulkcompressor.ui.ChipRow
 import com.steimerbyte.bulkcompressor.ui.MediaAdapter
 import com.steimerbyte.bulkcompressor.ui.SegmentBar
+import com.steimerbyte.bulkcompressor.ui.TerminalPanel
 
 class MainActivity : AppCompatActivity(), JobBus.Listener {
 
@@ -59,7 +62,18 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private lateinit var textPercent: TextView
     private lateinit var textCurrent: TextView
     private lateinit var textTotals: TextView
-    private lateinit var textLog: TextView
+    private lateinit var textActiveConfig: TextView
+    private lateinit var statusVideo: TextView
+    private lateinit var statusImages: TextView
+    private lateinit var statusBitrate: TextView
+    private lateinit var statusVideoResolution: TextView
+    private lateinit var groupVideo: View
+    private lateinit var groupImages: View
+    private lateinit var groupBitrate: View
+    private lateinit var terminal: TerminalPanel
+    private val logListener: (LogLine) -> Unit = { line ->
+        if (!isFinishing && this::terminal.isInitialized) terminal.append(line)
+    }
     private lateinit var buttonStart: Button
     private lateinit var buttonCancel: Button
     private lateinit var textBitrateValue: TextView
@@ -128,10 +142,13 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     override fun onStart() {
         super.onStart()
         JobBus.addListener(this)
+        Log.addListener(logListener)
+        if (this::terminal.isInitialized) terminal.setLines(Log.snapshot(TERMINAL_LINES))
     }
 
     override fun onStop() {
         JobBus.removeListener(this)
+        Log.removeListener(logListener)
         super.onStop()
     }
 
@@ -161,13 +178,45 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         textPercent = findViewById(R.id.text_percent)
         textCurrent = findViewById(R.id.text_current)
         textTotals = findViewById(R.id.text_totals)
-        textLog = findViewById(R.id.text_log)
+        textActiveConfig = findViewById(R.id.text_active_config)
+        statusVideo = findViewById(R.id.status_video)
+        statusImages = findViewById(R.id.status_images)
+        statusBitrate = findViewById(R.id.status_bitrate)
+        statusVideoResolution = findViewById(R.id.status_video_resolution)
+        groupVideo = findViewById(R.id.group_video)
+        groupImages = findViewById(R.id.group_images)
+        groupBitrate = findViewById(R.id.group_bitrate)
         buttonStart = findViewById(R.id.button_start)
         buttonCancel = findViewById(R.id.button_cancel)
         textBitrateValue = findViewById(R.id.text_bitrate_value)
         textQualityValue = findViewById(R.id.text_quality_value)
         seekBitrate = findViewById(R.id.seek_bitrate)
         seekQuality = findViewById(R.id.seek_quality)
+
+        terminal = TerminalPanel(
+            activity = this,
+            root = findViewById(R.id.terminal_panel),
+            onCopy = { Log.d(TAG, "Log in die Zwischenablage kopiert") },
+            onShare = { shareLog() },
+            onClear = { Log.d(TAG, "Terminalansicht geleert, Logdatei bleibt") }
+        )
+        terminal.setLines(Log.snapshot(TERMINAL_LINES))
+    }
+
+    /** Teilen ohne FileProvider: der Logtext geht als Text raus, damit
+     *  jede Ziel-App ihn direkt anzeigen kann. */
+    private fun shareLog() {
+        val text = Log.exportText()
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Bulk Compressor Log")
+            putExtra(Intent.EXTRA_TEXT, text.take(400_000))
+        }
+        runCatching { startActivity(Intent.createChooser(intent, "Log teilen")) }
+            .onFailure {
+                Log.w(TAG, "Teilen fehlgeschlagen", it)
+                toast("Kein Ziel fuer den Log gefunden")
+            }
     }
 
     private fun setupChips() {
@@ -306,7 +355,115 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             if (settings.outputMode == OutputMode.OVERWRITE) 0xFF9A9A9A.toInt() else 0xFF6B6B6B.toInt()
         )
         updateAccessRow()
+        renderActiveState()
         updateEstimate()
+    }
+
+    /**
+     * Beantwortet die Frage "welche Aktion ist gerade aktiv?" an drei
+     * Stellen: Abschnittsstatus rechts neben der Ueberschrift, das
+     * Zuruecknehmen der nicht wirksamen Bedienelemente und die
+     * Zusammenfassung ueber dem Startknopf.
+     */
+    private fun renderActiveState() {
+        val bitrateActive = settings.videoMode != VideoMode.SCALE
+        val resolutionActive = settings.videoMode != VideoMode.BITRATE
+
+        // Bitrate wirkt nur ausserhalb des reinen Aufloesungsmodus.
+        groupBitrate.alpha = if (bitrateActive) 1f else INACTIVE_ALPHA
+        seekBitrate.isEnabled = bitrateActive
+        setStatus(statusBitrate, bitrateActive)
+
+        // Aufloesung wirkt nur ausserhalb des reinen Bitratenmodus.
+        // Bewusst nur die Chips zuruecknehmen (nicht zusaetzlich den
+        // ganzen Block), sonst wird die Zeile doppelt gedimmt und ist
+        // kaum noch lesbar.
+        resolutionChips.setRowInactive(!resolutionActive)
+        setStatus(statusVideoResolution, resolutionActive)
+
+        // Ganze Abschnitte: ohne Dateien der Art gibt es nichts zu tun.
+        val chosen = scanResult?.items?.filter { selectedIds.contains(it.docId) }.orEmpty()
+        val hasVideos = chosen.any { it.kind == MediaKind.VIDEO }
+        val hasImages = chosen.any { it.kind == MediaKind.IMAGE }
+        val selectsNothing = scanResult == null
+
+        groupVideo.alpha = if (hasVideos || selectsNothing) 1f else INACTIVE_ALPHA
+        groupImages.alpha = if (hasImages || selectsNothing) 1f else INACTIVE_ALPHA
+        setSectionStatus(statusVideo, hasVideos, selectsNothing)
+        setSectionStatus(statusImages, hasImages, selectsNothing)
+
+        textActiveConfig.text = configSummary(hasVideos, hasImages, selectsNothing)
+    }
+
+    private fun setStatus(view: TextView, active: Boolean) {
+        view.setText(if (active) R.string.status_active else R.string.status_inactive)
+        view.setTextColor(if (active) 0xFFFFFFFF.toInt() else 0xFF6B6B6B.toInt())
+    }
+
+    private fun setSectionStatus(view: TextView, hasItems: Boolean, unknown: Boolean) {
+        when {
+            unknown -> {
+                view.setText(R.string.status_active)
+                view.setTextColor(0xFF6B6B6B.toInt())
+            }
+            hasItems -> {
+                view.setText(R.string.status_active)
+                view.setTextColor(0xFFFFFFFF.toInt())
+            }
+            else -> {
+                view.setText(R.string.status_no_selection)
+                view.setTextColor(0xFF6B6B6B.toInt())
+            }
+        }
+    }
+
+    private fun configSummary(hasVideos: Boolean, hasImages: Boolean, unknown: Boolean): String {
+        val codec = getString(
+            when (settings.codec) {
+                VideoCodec.AUTO -> R.string.codec_auto
+                VideoCodec.AVC -> R.string.codec_avc
+                VideoCodec.HEVC -> R.string.codec_hevc
+            }
+        )
+        val edge = if (settings.videoShortEdge > 0) "${settings.videoShortEdge}p" else getString(R.string.value_unchanged)
+        val videoLine = when {
+            !unknown && !hasVideos -> getString(R.string.config_video_off)
+            settings.videoMode == VideoMode.BITRATE ->
+                getString(R.string.config_video_bitrate, settings.bitratePercent, codec)
+            settings.videoMode == VideoMode.SCALE ->
+                getString(R.string.config_video_scale, edge, codec)
+            else ->
+                getString(R.string.config_video_both, settings.bitratePercent, edge, codec)
+        }
+        val imageEdge = if (settings.imageShortEdge > 0) "${settings.imageShortEdge}p" else getString(R.string.value_unchanged)
+        val imageFormat = getString(
+            when (settings.imageFormat) {
+                ImageFormat.KEEP -> R.string.format_keep
+                ImageFormat.JPEG -> R.string.format_jpeg
+                ImageFormat.WEBP -> R.string.format_webp
+            }
+        )
+        val imageLine = if (!unknown && !hasImages) {
+            getString(R.string.config_images_off)
+        } else {
+            getString(R.string.config_images, imageEdge, settings.imageQuality, imageFormat)
+        }
+        val output = getString(
+            if (settings.outputMode == OutputMode.OVERWRITE) R.string.output_overwrite
+            else R.string.output_keep
+        )
+        return buildString {
+            appendLine(videoLine)
+            appendLine(imageLine)
+            append(
+                getString(
+                    R.string.config_output,
+                    output,
+                    getString(if (settings.keepTimestamps) R.string.value_on else R.string.value_off),
+                    getString(if (settings.keepExif) R.string.value_on else R.string.value_off)
+                )
+            )
+        }
     }
 
     private fun updateAccessRow() {
@@ -399,6 +556,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             listMedia.visibility = View.VISIBLE
         }
         adapter.submit(result.items, selectedIds)
+        renderActiveState()
         updateEstimate()
     }
 
@@ -411,6 +569,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             true
         }
         adapter.setSelected(item.docId, nowSelected)
+        renderActiveState()
         updateEstimate()
     }
 
@@ -478,6 +637,13 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             return
         }
         settings.save(prefs)
+        Log.i(
+            TAG,
+            "Start angefordert: ${selectedIds.size} Dateien · Modus ${settings.videoMode} · " +
+                "${settings.bitratePercent} % · ${settings.videoShortEdge}p · Codec ${settings.codec} · " +
+                "Bilder Q${settings.imageQuality} ${settings.imageShortEdge}p ${settings.imageFormat} · " +
+                "Ausgabe ${settings.outputMode}"
+        )
 
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
@@ -519,7 +685,6 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
                     append(" %)")
                 }
             }
-            textLog.text = state.log.takeLast(40).joinToString("\n")
 
             buttonStart.isEnabled = !state.running
             buttonCancel.visibility = if (state.running) View.VISIBLE else View.GONE
@@ -542,7 +707,12 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     }
 
     companion object {
+        private const val TAG = "UI"
         private const val KEY_TREE = "tree_uri"
+        private const val TERMINAL_LINES = 400
+
+        /** Wie stark ein nicht wirksamer Abschnitt zurueckgenommen wird. */
+        private const val INACTIVE_ALPHA = 0.35f
         private val RESOLUTION_VALUES = intArrayOf(0, 2160, 1440, 1080, 720, 480)
         private val IMAGE_RESOLUTION_VALUES = intArrayOf(0, 2160, 1440, 1080, 720)
     }

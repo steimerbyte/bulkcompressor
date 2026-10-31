@@ -3,7 +3,8 @@
     Wurzel ist ein FrameLayout, damit das Terminal-Panel ueber dem Inhalt
     am unteren Rand liegen kann, ohne den Scrollbereich zu verschieben.
     Der Inhalt bekommt unten 88dp Luft, damit die letzte Zeile und der
-    Startknopf nicht hinter dem zugeklappten Terminal verschwinden.
+    Startknopf (jetzt das letzte Bedienelement) nicht hinter dem
+    zugeklappten Terminal verschwinden.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -722,19 +723,6 @@
                 android:textColor="@color/nothing_grey"
                 android:textSize="12sp" />
 
-            <Button
-                android:id="@+id/button_start"
-                android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:layout_marginTop="16dp"
-                android:background="@drawable/button_background"
-                android:fontFamily="monospace"
-                android:letterSpacing="0.08"
-                android:text="@string/button_start"
-                android:textAllCaps="false"
-                android:textColor="@color/nothing_black"
-                android:textSize="14sp" />
-
             <!-- Fortschritt -->
 
             <LinearLayout
@@ -781,18 +769,23 @@
                     android:textColor="@color/nothing_dim"
                     android:textSize="11sp" />
 
-                <Button
-                    android:id="@+id/button_cancel"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginTop="14dp"
-                    android:background="@drawable/button_background_outline"
-                    android:fontFamily="monospace"
-                    android:text="@string/button_cancel"
-                    android:textAllCaps="false"
-                    android:textColor="@color/nothing_red"
-                    android:textSize="13sp" />
             </LinearLayout>
+
+            <!-- Start und Stopp in einem Knopf, ganz unten: die Beschriftung
+                 folgt dem Zustand aus JobBus, nicht dem letzten Klick. -->
+
+            <Button
+                android:id="@+id/button_start"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="22dp"
+                android:background="@drawable/button_background"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.08"
+                android:text="@string/button_start"
+                android:textAllCaps="false"
+                android:textColor="@color/nothing_black"
+                android:textSize="14sp" />
 
             <TextView
                 android:layout_width="match_parent"

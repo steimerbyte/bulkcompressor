@@ -28,7 +28,11 @@ Kein Konto. Kein Netzwerk. Keine Analytics. Kein `INTERNET`-Recht.
    Ordner und liest rekursiv Videos und Bilder heraus.
 2. **Preset einstellen** (siehe unten).
 3. **Auswählen**, was bearbeitet wird — alles oder einzelne Dateien.
-4. **Start.** Alles Weitere läuft als Vordergrunddienst mit
+4. **Start.** Der Knopf ganz unten ist Start und Stopp in einem:
+   solange ein Lauf aktiv ist, steht dort `STOPP` und ein Griff bricht ab.
+   Die Beschriftung folgt dem Zustand des Dienstes, nicht dem letzten
+   Klick — sonst bliebe der Knopf nach einem im Hintergrund beendeten
+   Lauf gesperrt. Alles Weitere läuft als Vordergrunddienst mit
    Fortschrittsbenachrichtigung, auch bei gesperrtem Bildschirm — über
    Stunden, mit Speicherbremse und ohne Verlust des Fortschritts (siehe
    [Lange Läufe](#lange-läufe)).
@@ -127,7 +131,7 @@ Zugriff ein.
 |---|---|
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC` | Komprimierung läuft weiter, wenn die App im Hintergrund ist |
 | `WAKE_LOCK` | Der Lauf wird bei ausgeschaltetem Bildschirm nicht eingefroren |
-| `POST_NOTIFICATIONS` | Fortschrittsanzeige und Abbrechen-Knopf |
+| `POST_NOTIFICATIONS` | Fortschrittsanzeige in der Benachrichtigung |
 | `WRITE_EXTERNAL_STORAGE` (**nur Android 7–9**, `maxSdkVersion=28`) | Logdatei im öffentlichen Download-Ordner; ab Android 10 erledigt das `MediaStore` ohne Berechtigung |
 | `MANAGE_EXTERNAL_STORAGE` | **optional** — nur für das Zurücksetzen des Dateizeitstempels; die App läuft vollständig ohne |
 

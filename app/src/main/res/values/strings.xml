@@ -65,7 +65,11 @@
     <string name="access_grant">Zugriff auf alle Dateien freigeben</string>
 
     <string name="button_start">Start</string>
-    <string name="button_cancel">Abbrechen</string>
+    <string name="button_starting">Startet ...</string>
+    <string name="button_stop">Stopp</string>
+    <string name="button_cancelling">Bricht ab ...</string>
+    <string name="button_no_selection">Keine Auswahl</string>
+    <string name="error_start_refused">Start kam nicht an - Details im Protokoll</string>
     <string name="action_cancel">Abbrechen</string>
     <string name="progress_preparing">Vorbereitung …</string>
 

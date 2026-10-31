@@ -90,7 +90,17 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         if (!isFinishing && this::terminal.isInitialized) terminal.append(line)
     }
     private lateinit var buttonStart: Button
-    private lateinit var buttonCancel: Button
+
+    /** Der Knopf ist Start und Stopp in einem; das hier ist die Anzeige dafuer. */
+    private var cancelRequested = false
+
+    /**
+     * Ein Auftrag ist abgegeben, aber der Dienst hat ihn noch nicht
+     * angenommen. Solange gilt der Knopf als beschaeftigt - und der
+     * Startwaechter raeumt die Markierung auf, falls nie eine Meldung kommt.
+     */
+    private var startPending = false
+    private var startAttempts = 0
     private lateinit var textBitrateValue: TextView
     private lateinit var textQualityValue: TextView
     private lateinit var seekBitrate: SeekBar
@@ -103,12 +113,12 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private lateinit var imageFormatChips: ChipRow
     private lateinit var outputChips: ChipRow
 
-    private var pendingStart = false
+    private var awaitingNotificationPermission = false
 
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (pendingStart) {
-                pendingStart = false
+            if (awaitingNotificationPermission) {
+                awaitingNotificationPermission = false
                 if (granted) {
                     launchJob()
                 } else {
@@ -167,17 +177,12 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         }
         buttonStart.setOnClickListener {
             SoundKit.play(SoundKit.Click.THUNK)
-            onStartClicked()
+            onStartButtonClicked()
         }
         buttonAccess.setOnClickListener {
             SoundKit.play(SoundKit.Click.TICK)
             requestAllFilesAccess()
         }
-        buttonCancel.setOnClickListener {
-            SoundKit.play(SoundKit.Click.TICK)
-            CompressionService.cancel(this)
-        }
-
         applySettingsToViews()
         requestLegacyStoragePermission()
         restoreFolder()
@@ -198,6 +203,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     override fun onStart() {
         super.onStart()
         JobBus.addListener(this)
+        renderStartButton()
         Log.addListener(logListener)
         if (this::terminal.isInitialized) terminal.setLines(Log.snapshot(TERMINAL_LINES))
     }
@@ -252,7 +258,6 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         groupImages = findViewById(R.id.group_images)
         groupBitrate = findViewById(R.id.group_bitrate)
         buttonStart = findViewById(R.id.button_start)
-        buttonCancel = findViewById(R.id.button_cancel)
         textBitrateValue = findViewById(R.id.text_bitrate_value)
         textQualityValue = findViewById(R.id.text_quality_value)
         seekBitrate = findViewById(R.id.seek_bitrate)
@@ -649,6 +654,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         }
         adapter.submit(result.items, selectedIds)
         renderActiveState()
+        renderStartButton()
         updateEstimate()
     }
 
@@ -662,6 +668,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         }
         adapter.setSelected(item.docId, nowSelected)
         renderActiveState()
+        renderStartButton()
         updateEstimate()
     }
 
@@ -731,7 +738,14 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         legacyStoragePermission.launch(permission)
     }
 
-    private fun onStartClicked() {
+    private fun onStartButtonClicked() {
+        if (JobBus.state.running) {
+            cancelRequested = true
+            renderStartButton()
+            Log.i(TAG, "Abbruch ueber den Startknopf angefordert")
+            CompressionService.cancel(this)
+            return
+        }
         val uri = treeUri
         if (uri == null) {
             toast(getString(R.string.error_no_folder))
@@ -754,7 +768,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            pendingStart = true
+            awaitingNotificationPermission = true
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             return
         }
@@ -763,15 +777,98 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     private fun launchJob() {
         val uri = treeUri ?: return
-        JobBus.reset()
         groupProgress.visibility = View.VISIBLE
-        buttonStart.isEnabled = false
+        startAttempts = 0
+        startPending = true
+        JobBus.reset()
+        renderStartButton()
         CompressionService.start(this, uri, selectedIds.toList())
+        // Der Dienst meldet sich sofort mit "laeuft". Bleibt das aus, hat er
+        // den Auftrag verworfen - dann wird einmal nachgestartet und danach
+        // aufgegeben, statt einen toten Knopf zu hinterlassen.
+        statsHandler.removeCallbacks(startCheck)
+        statsHandler.postDelayed(startCheck, START_CHECK_MS)
+    }
+
+    /**
+     * Waechter fuer den Start: der Dienst kann einen Auftrag ablehnen, ohne
+     * dass die Oberflaeche davon erfaehrt. Statt eines stillen Nichtstuns
+     * gibt es einen zweiten Versuch und dann eine sichtbare Meldung.
+     */
+    private val startCheck = object : Runnable {
+        override fun run() {
+            if (isFinishing || isDestroyed) return
+            val state = JobBus.state
+            if (state.running || state.finished || state.cancelled) return
+            val uri = treeUri
+            val ids = selectedIds.toList()
+            if (uri == null || ids.isEmpty()) return
+            if (startAttempts >= MAX_START_ATTEMPTS) {
+                Log.e(
+                    TAG,
+                    "Auftrag nach $MAX_START_ATTEMPTS Versuchen nicht angenommen - aufgegeben"
+                )
+                JobBus.appendLog("Auftrag kam nicht an: $MAX_START_ATTEMPTS Versuche ohne Wirkung")
+                startPending = false
+                renderStartButton()
+                toast(getString(R.string.error_start_refused))
+                return
+            }
+            startAttempts++
+            Log.w(
+                TAG,
+                "Auftrag nach ${START_CHECK_MS} ms nicht angenommen - Versuch $startAttempts" +
+                    " (${ids.size} Dateien)"
+            )
+            CompressionService.start(this@MainActivity, uri, ids)
+            statsHandler.postDelayed(this, START_CHECK_MS)
+        }
+    }
+
+    /**
+     * Ein Knopf, zwei Bedeutungen. Der angezeigte Zustand kommt aus
+     * [JobBus], nicht aus einem frueheren Klick: sonst bleibt der Knopf nach
+     * einem im Hintergrund beendeten Lauf gesperrt, weil dessen Endmeldung
+     * niemand gesehen hat.
+     */
+    private fun renderStartButton() {
+        val state = JobBus.state
+        when {
+            state.running && cancelRequested -> {
+                buttonStart.setText(R.string.button_cancelling)
+                buttonStart.isEnabled = true
+                buttonStart.setTextColor(0xFFFF4D4D.toInt())
+                buttonStart.setBackgroundResource(R.drawable.button_background_outline)
+            }
+            state.running -> {
+                startPending = false
+                buttonStart.setText(R.string.button_stop)
+                buttonStart.isEnabled = true
+                buttonStart.setTextColor(0xFFFF4D4D.toInt())
+                buttonStart.setBackgroundResource(R.drawable.button_background_outline)
+            }
+            startPending -> {
+                buttonStart.setText(R.string.button_starting)
+                buttonStart.isEnabled = false
+                buttonStart.setTextColor(0xFF6B6B6B.toInt())
+                buttonStart.setBackgroundResource(R.drawable.button_background_outline)
+            }
+            else -> {
+                cancelRequested = false
+                val ready = treeUri != null && selectedIds.isNotEmpty()
+                buttonStart.setText(if (ready) R.string.button_start else R.string.button_no_selection)
+                buttonStart.isEnabled = ready
+                buttonStart.setTextColor(0xFF000000.toInt())
+                buttonStart.setBackgroundResource(R.drawable.button_background)
+            }
+        }
     }
 
     override fun onState(state: JobBus.State) {
         runOnUiThread {
             if (isFinishing) return@runOnUiThread
+            if (state.running || state.finished || state.cancelled) startPending = false
+            renderStartButton()
             if (!state.running && !state.finished && !state.cancelled) return@runOnUiThread
 
             groupProgress.visibility = View.VISIBLE
@@ -791,10 +888,6 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
                 }
             }
 
-            buttonStart.isEnabled = !state.running
-            buttonCancel.visibility = if (state.running) View.VISIBLE else View.GONE
-            if (state.finished) buttonStart.setText(R.string.button_start)
-
             stats.onRunFinished(
                 running = state.running,
                 cancelled = state.cancelled,
@@ -803,6 +896,12 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
                 files = state.done
             )
         }
+    }
+
+    /** Nur fuer Tests: Ordner und Scanergebnis ohne echten ContentProvider. */
+    internal fun applyScanForTest(tree: Uri, result: ScanResult) {
+        treeUri = tree
+        applyScan(result)
     }
 
     private fun toast(message: String) {
@@ -834,6 +933,12 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
         /** Takt der Speichertafel - ein Blick pro Sekunde reicht. */
         private const val STATS_INTERVAL_MS = 1000L
+
+        /** Nach dieser Zeit muss der Dienst den Auftrag angenommen haben. */
+        private const val START_CHECK_MS = 4000L
+
+        /** Ein Wiederholungsversuch, dann eine Meldung statt Stille. */
+        private const val MAX_START_ATTEMPTS = 1
 
         /** Wie stark ein nicht wirksamer Abschnitt zurueckgenommen wird. */
         private const val INACTIVE_ALPHA = 0.35f

@@ -38,6 +38,14 @@ class CompressionService : Service(), JobBus.Listener {
     private var notificationUpdates = 0
     private var runStartedAt = 0L
     private var cancelRequestedAt = 0L
+
+    /**
+     * Ein Start, der waehrend des Abschlusses des vorigen Laufs eintrifft.
+     * Frueher wurde er stillschweigend verworfen - die Oberflaeche blieb
+     * dann mit einem nicht bedienbaren Startknopf zurueck, ohne Hinweis.
+     */
+    @Volatile
+    private var pendingStart: Intent? = null
     private var wakeLockRenewals = 0
 
     private val renewHandler by lazy { Handler(Looper.getMainLooper()) }
@@ -80,10 +88,6 @@ class CompressionService : Service(), JobBus.Listener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                if (worker?.isAlive == true) {
-                    Log.d("Service", "Start ignoriert: es laeuft bereits ein Auftrag")
-                    return START_NOT_STICKY
-                }
                 val tree = intent.getStringExtra(EXTRA_TREE)
                 val docIds = intent.getStringArrayListExtra(EXTRA_DOC_IDS).orEmpty()
                 if (tree == null || docIds.isEmpty()) {
@@ -91,22 +95,39 @@ class CompressionService : Service(), JobBus.Listener {
                         "Service",
                         "Start ohne Ordner oder Dateien verworfen (tree=$tree, Dateien=${docIds.size})"
                     )
+                    // Ein verworfener Auftrag muss sichtbar sein: ohne diese
+                    // Meldung bleibt die Oberflaeche im Zustand "laeuft" und
+                    // der Startknopf ist tot, ohne dass jemand erfaehrt warum.
+                    JobBus.appendLog("Auftrag verworfen: kein Ordner oder keine Dateien ausgewaehlt")
+                    JobBus.publish(JobBus.State(finished = true))
                     stopSelf()
                     return START_NOT_STICKY
+                }
+                if (worker?.isAlive == true) {
+                    pendingStart = intent
+                    Log.i(
+                        "Service",
+                        "Start vorgemerkt: voriger Lauf schliesst noch ab (Worker ${worker?.id} laeuft)"
+                    )
+                    JobBus.appendLog("Neuer Auftrag vorgemerkt - startet nach dem Abschluss des vorigen Laufs")
+                    return START_REDELIVER_INTENT
                 }
                 Log.i("Service", "Start: ${docIds.size} Dateien · $tree")
                 if (!startForegroundNow()) {
                     Log.e("Service", "Vordergrunddienst nicht moeglich - Auftrag wird nicht gestartet")
+                    JobBus.appendLog("Nicht gestartet: Vordergrunddienst war nicht moeglich")
+                    JobBus.publish(JobBus.State(finished = true))
                     stopSelf()
                     return START_NOT_STICKY
                 }
-                launchWorker(Uri.parse(tree), docIds)
+                beginRun(Uri.parse(tree), docIds)
                 // Ein vom System beendeter Prozess bekommt den Auftrag
                 // erneut zugestellt; das Journal nimmt die erledigten
                 // Dateien heraus.
                 return START_REDELIVER_INTENT
             }
             ACTION_CANCEL -> {
+                pendingStart = null
                 cancelRequestedAt = System.currentTimeMillis()
                 val runningSince = runStartedAt
                 Log.i(
@@ -128,6 +149,21 @@ class CompressionService : Service(), JobBus.Listener {
             else -> Log.w("Service", "Unbekannter Auftrag: ${intent?.action}")
         }
         return START_NOT_STICKY
+    }
+
+    /**
+     * Meldet den angenommenen Auftrag sofort und startet den Worker.
+     *
+     * Die Meldung muss vor dem Scan stehen: der Worker liest den Ordner neu
+     * ein, und bis dahin sieht die Oberflaeche sonst gar nichts - der
+     * Startknopf bliebe auf "Start" und ein zweiter Griff wuerde doppelt
+     * starten.
+     */
+    private fun beginRun(treeUri: Uri, docIds: List<String>) {
+        JobBus.publish(
+            JobBus.State(running = true, total = docIds.size, currentName = "Vorbereitung ...")
+        )
+        launchWorker(treeUri, docIds)
     }
 
     private fun launchWorker(treeUri: Uri, docIds: List<String>) {
@@ -197,7 +233,29 @@ class CompressionService : Service(), JobBus.Listener {
                     }
                 )
                 releaseWakeLock()
-                finishForeground()
+                val next = pendingStart
+                pendingStart = null
+                if (next == null) {
+                    finishForeground()
+                } else {
+                    // Abschlussmeldung ja, Dienstende nein: der vorgemerkte
+                    // Auftrag laeuft direkt weiter.
+                    finishForeground(stopService = false)
+                    val tree = next.getStringExtra(EXTRA_TREE)
+                    val docIds = next.getStringArrayListExtra(EXTRA_DOC_IDS).orEmpty()
+                    Log.i(
+                        "Service",
+                        "Vorgemerkter Auftrag wird angeschlossen: ${docIds.size} Dateien" +
+                            " \u00b7 $tree"
+                    )
+                    if (tree == null || docIds.isEmpty()) {
+                        finishForeground()
+                    } else {
+                        Handler(Looper.getMainLooper()).post {
+                            beginRun(Uri.parse(tree), docIds)
+                        }
+                    }
+                }
             }
         }, "bulk-compress")
         worker = thread
@@ -329,7 +387,7 @@ class CompressionService : Service(), JobBus.Listener {
         }
     }
 
-    private fun finishForeground() {
+    private fun finishForeground(stopService: Boolean = true) {
         JobBus.publish(JobBus.state.copy(running = false))
         val state = JobBus.state
         val summary = buildString {

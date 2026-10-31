@@ -4,6 +4,38 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.3.1] – 2026-10-31
+
+Zwei Beobachtungen aus dem ersten echten Lauf.
+
+### Behoben
+
+- **Der Startknopf blieb tot, wenn ein Lauf im Hintergrund endete.** Der
+  Knopf wurde in `launchJob` gesperrt und erst durch eine Zustandsmeldung
+  wieder freigegeben. Kam diese Meldung nicht an (App im Hintergrund), sah
+  man "Start", konnte aber nicht druecken — auch nach Wahl eines neuen
+  Ordners nicht. Die Anzeige kommt jetzt bei jedem Zustand aus `JobBus`;
+  ein neuer Ordner mit Dateien macht den Knopf sofort wieder bedienbar.
+- **Auftraege wurden vom Dienst wortlos verworfen** (kein Ordner, keine
+  Dateien, kein Vordergrunddienst, voriger Lauf noch im Abschluss). Jetzt
+  nennt das Protokoll den Grund, die Oberflaeche bekommt einen
+  Abschlusszustand, und ein Start waehrend des Abschlusses wird vorgemerkt
+  und danach ausgefuehrt statt fallen gelassen.
+- **Der Dienst meldet den angenommenen Auftrag sofort** ("laeuft"), nicht
+  erst nach dem erneuten Einlesen des Ordners. Ein zweiter Griff auf Start
+  startet dadurch nicht mehr versehentlich doppelt.
+- **Startwaechter in der Oberflaeche:** hat der Dienst den Auftrag nach
+  4 s nicht angenommen, wird einmal nachgestartet und danach gemeldet
+  ("Start kam nicht an") — nie wieder ein Knopf, der nichts tut.
+
+### Geaendert
+
+- **Start und Stopp in einem Knopf**, ganz unten statt in der Mitte, mit
+  Rueckmeldung `Startet ...` bis der Dienst uebernimmt und `STOPP`
+  waehrend des Laufs. Der getrennte Abbrechen-Knopf entfaellt.
+- Ohne Ordner oder ohne ausgewaehlte Datei zeigt der Knopf `Keine Auswahl`
+  statt eines Klicks, der nur einen Hinweis-Toast ausloest.
+
 ## [1.3.0] – 2026-10-31
 
 Ein Lauf ueber hunderte Videos dauert Stunden. Diese Fassung beschaeftigt

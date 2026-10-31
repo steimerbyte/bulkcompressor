@@ -1,5 +1,6 @@
 package com.steimerbyte.bulkcompressor.job
 
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -19,6 +20,7 @@ import androidx.core.content.ContextCompat
 import com.steimerbyte.bulkcompressor.MainActivity
 import com.steimerbyte.bulkcompressor.R
 import com.steimerbyte.bulkcompressor.log.Log
+import com.steimerbyte.bulkcompressor.engine.MemoryGuard
 import com.steimerbyte.bulkcompressor.model.CompressSettings
 import com.steimerbyte.bulkcompressor.scan.SafScanner
 import java.util.concurrent.atomic.AtomicBoolean
@@ -36,6 +38,10 @@ class CompressionService : Service(), JobBus.Listener {
     private var wakeLock: PowerManager.WakeLock? = null
     private var lastNotificationUpdate = 0L
     private var notificationUpdates = 0
+
+    /** Zuletzt gelesener Geraetespeicher; wird nicht bei jedem Prozent neu erfragt. */
+    private var deviceFreeBytes = -1L
+    private var deviceRamAt = 0L
     private var runStartedAt = 0L
     private var cancelRequestedAt = 0L
 
@@ -113,7 +119,7 @@ class CompressionService : Service(), JobBus.Listener {
                     return START_REDELIVER_INTENT
                 }
                 Log.i("Service", "Start: ${docIds.size} Dateien · $tree")
-                if (!startForegroundNow()) {
+                if (!startForegroundNow(docIds.size)) {
                     Log.e("Service", "Vordergrunddienst nicht moeglich - Auftrag wird nicht gestartet")
                     JobBus.appendLog("Nicht gestartet: Vordergrunddienst war nicht moeglich")
                     JobBus.publish(JobBus.State(finished = true))
@@ -334,19 +340,39 @@ class CompressionService : Service(), JobBus.Listener {
                     " · Text \"${state.currentName.ifBlank { "Vorbereitung ..." }}\""
             )
         }
+        val runtime = Runtime.getRuntime()
+        refreshDeviceRam(now)
         notify(
-            text = state.currentName.ifBlank { "Vorbereitung ..." },
-            subText = "${state.done} / ${state.total}",
+            // Die Speicherzeile steht im immer sichtbaren Text, der Dateiname
+            // darunter im Kopfbereich - "wie knapp wird es" will man sehen,
+            // ohne die App zu oeffnen.
+            text = NotificationText.progressLine(
+                done = state.done,
+                total = state.total,
+                heapUsed = runtime.totalMemory() - runtime.freeMemory(),
+                heapMax = runtime.maxMemory(),
+                deviceFree = deviceFreeBytes,
+                level = MemoryGuard.level()
+            ),
+            subText = state.currentName.ifBlank { "Vorbereitung ..." },
             percent = (state.overall * 100).toInt(),
             showProgress = true
         )
     }
 
     @Suppress("DEPRECATION")
-    private fun startForegroundNow(): Boolean {
+    private fun startForegroundNow(total: Int): Boolean {
         // Ohne POST_NOTIFICATIONS (ab Android 13) laeuft der Dienst
         // trotzdem; dann ist eben nur keine Benachrichtigung sichtbar.
-        val notification = buildNotification("Startet ...", null, 0, true)
+        val startLine = NotificationText.progressLine(
+            done = 0,
+            total = total,
+            heapUsed = Runtime.getRuntime().let { it.totalMemory() - it.freeMemory() },
+            heapMax = Runtime.getRuntime().maxMemory(),
+            deviceFree = deviceFreeBytes,
+            level = MemoryGuard.level()
+        )
+        val notification = buildNotification(startLine, "Startet ...", 0, true)
         val started = runCatching {
             if (Build.VERSION.SDK_INT >= 29) {
                 startForeground(
@@ -410,6 +436,22 @@ class CompressionService : Service(), JobBus.Listener {
         stopSelf()
     }
 
+    /**
+     * Der Geraetespeicher kommt vom Systemdienst und wird deshalb nicht bei
+     * jedem Prozent neu erfragt - fuer die Anzeige reicht ein Takt von zwei
+     * Sekunden, der eigene Heap wird ohnehin je Meldung gelesen.
+     */
+    private fun refreshDeviceRam(now: Long) {
+        if (deviceFreeBytes >= 0 && now - deviceRamAt < DEVICE_RAM_REFRESH_MS) return
+        deviceRamAt = now
+        runCatching {
+            val manager = getSystemService(ActivityManager::class.java)
+            val info = ActivityManager.MemoryInfo()
+            manager.getMemoryInfo(info)
+            deviceFreeBytes = info.availMem
+        }
+    }
+
     private fun notify(text: String, subText: String?, percent: Int, showProgress: Boolean) {
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, buildNotification(text, subText, percent, showProgress))
@@ -439,6 +481,14 @@ class CompressionService : Service(), JobBus.Listener {
 
         if (subText != null) builder.setSubText(subText)
         if (showProgress) {
+            // Aufgeklappt steht beides untereinander: im zugeklappten
+            // Zustand zeigen manche Hersteller nur den Fliesstext, und
+            // gerade dort soll die Speicherzeile nicht wegfallen.
+            builder.setStyle(
+                NotificationCompat.BigTextStyle().bigText(
+                    if (subText.isNullOrBlank()) text else "$text\n$subText"
+                )
+            )
             builder.setProgress(100, percent.coerceIn(0, 100), false)
             val cancelIntent = PendingIntent.getService(
                 this,
@@ -557,6 +607,9 @@ class CompressionService : Service(), JobBus.Listener {
         const val EXTRA_TREE = "tree"
         const val EXTRA_DOC_IDS = "doc_ids"
         private const val CHANNEL_ID = "compression"
+
+        /** Der Geraetespeicher wird hoechstens alle zwei Sekunden erfragt. */
+        private const val DEVICE_RAM_REFRESH_MS = 2_000L
         private const val NOTIFICATION_ID = 4711
 
         /** Zeitlimit des Wachhunds: danach gibt Android die Sperre selbst frei. */

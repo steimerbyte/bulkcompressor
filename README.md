@@ -182,6 +182,22 @@ passieren Dinge, die mit einem einzelnen Foto nie passieren. Dagegen steht:
 |Encoder mag den Plan nicht (`CodecException`)|Ein Versuch mit H.264 statt H.265, dann erst Fehler.|
 |Heap erschöpft|Betrifft genau eine Datei; sie wird als Fehler gezählt, der Lauf macht weiter.|
 
+Die **Fortschrittsbenachrichtigung** zeigt neben dem Fortschritt den
+Arbeitsspeicher, also auch bei gesperrtem Bildschirm und ohne die App zu
+öffnen:
+
+```
+Bulk Compressor
+4 / 10 · RAM 412/768 MB · Gerät 2,10 GB frei
+a.mp4
+[======            ]
+```
+
+Steht der Wächter auf `knapp` oder `sehr knapp`, steht das Wort dahinter —
+es erklärt, warum der Balken gerade stehen bleibt. Der Gerätespeicher wird
+alle zwei Sekunden neu gelesen, der eigene Heap bei jeder Meldung (frühestens
+alle 400 ms oder je 5 %).
+
 Die **Speichertafel** ganz oben zeigt das laufend: App-Heap mit
 Segmentbalken (weiß → grau → rot), freier Arbeitsspeicher des Geräts und —
 nach einem erfolgreichen Lauf — den freigewordenen Plattenplatz in GB.

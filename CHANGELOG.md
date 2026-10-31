@@ -4,6 +4,22 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.4.0] – 2026-10-31
+
+### Hinzugefügt
+
+- **Arbeitsspeicher in der Fortschrittsbenachrichtigung.** Dort steht jetzt
+  `4 / 10 · RAM 412/768 MB · Gerät 2,10 GB frei` — der Fortschritt, der
+  eigene Heap und der freie Arbeitsspeicher des Geräts in einer Zeile, die
+  auch aufgeklappt erhalten bleibt. Bei Speicherdruck kommt das Wort des
+  Wächters dazu (`knapp`, `sehr knapp`) und erklärt, warum der Balken
+  gerade steht.
+  Der Geraetespeicher wird hoechstens alle zwei Sekunden erfragt, der
+  eigene Heap bei jeder Meldung; die Kadenz der Benachrichtigung bleibt
+  bei 400 ms oder 5 % Fortschritt.
+- Die Startmeldung nennt dieselbe Zeile, damit der Speicherstand nicht
+  erst beim ersten Prozentwechsel auftaucht.
+
 ## [1.3.1] – 2026-10-31
 
 Zwei Beobachtungen aus dem ersten echten Lauf.

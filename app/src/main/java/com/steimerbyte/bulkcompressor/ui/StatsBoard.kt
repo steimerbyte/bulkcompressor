@@ -2,11 +2,11 @@ package com.steimerbyte.bulkcompressor.ui
 
 import android.app.ActivityManager
 import android.content.Context
-import android.content.SharedPreferences
 import android.view.View
 import android.widget.TextView
 import com.steimerbyte.bulkcompressor.R
 import com.steimerbyte.bulkcompressor.engine.MemoryGuard
+import com.steimerbyte.bulkcompressor.stats.RunRecord
 
 /**
  * Die Tafel ganz oben: was der Lauf gerade an Arbeitsspeicher zieht und
@@ -27,14 +27,14 @@ import com.steimerbyte.bulkcompressor.engine.MemoryGuard
  *   noch Luft hat, weil die Galerie oder die Kamera daneben laufen.
  *
  * Nach einem erfolgreichen Lauf steht unten, wie viel Plattenplatz
- * tatsaechlich freigeworden ist. Der Wert wird gespeichert, damit er
- * beim naechsten Start noch da ist - sonst waere die Zahl weg, sobald
- * die Oberflaeche neu aufgebaut wird.
+ * tatsaechlich freigeworden ist. Die Zahl kommt aus der Laufhistorie
+ * (letzter Eintrag) und nicht mehr aus eigenen SharedPreferences: die
+ * Historie ist die einzige Quelle, sonst zeigten Tafel und Statistikseite
+ * beim naechsten Lauf zwei verschiedene Staende.
  */
 class StatsBoard(
     private val context: Context,
-    root: View,
-    private val prefs: SharedPreferences
+    root: View
 ) {
 
     private val memoryState: TextView = root.findViewById(R.id.text_stats_memory_state)
@@ -95,46 +95,26 @@ class StatsBoard(
             context.getString(R.string.stats_device_unknown)
         }
 
-        renderSaved()
+        // Der gespeicherte Stand wird von der Activity nach dem Laden
+        // der Laufhistorie gesetzt (renderSaved), nicht hier.
     }
 
     /**
-     * Uebernimmt das Ergebnis eines beendeten Laufs. Nur bei Erfolg und
-     * nur, wenn wirklich Platz gewonnen wurde - ein abgebrochener Lauf
-     * hat keine Zahl verdient, die wie ein Ergebnis aussieht.
+     * Zeigt den letzten abgeschlossenen Lauf. Ein Lauf ohne Einsparung
+     * bekommt keine Zahl, die wie ein Ergebnis aussieht - dieselbe Regel
+     * wie auf der Statistikseite, dort als "nichts gespart".
      */
-    fun onRunFinished(running: Boolean, cancelled: Boolean, finished: Boolean, savedBytes: Long, files: Int) {
-        if (running || cancelled || !finished) return
-        if (savedBytes <= 0 || files <= 0) return
-        prefs.edit()
-            .putLong(KEY_SAVED, savedBytes)
-            .putInt(KEY_FILES, files)
-            .putLong(KEY_AT, System.currentTimeMillis())
-            .apply()
-        renderSaved()
-    }
-
-    /** Zeigt den gespeicherten Stand aus dem letzten erfolgreichen Lauf. */
-    fun renderSaved() {
-        val saved = prefs.getLong(KEY_SAVED, 0L)
-        val files = prefs.getInt(KEY_FILES, 0)
-        if (saved <= 0) {
+    fun renderSaved(lastRun: RunRecord?) {
+        if (lastRun == null || lastRun.savedBytes <= 0) {
             savedGroup.visibility = View.GONE
             return
         }
         savedGroup.visibility = View.VISIBLE
-        savedValue.text = StatsFormat.formatFreed(saved)
-        val at = prefs.getLong(KEY_AT, 0L)
+        savedValue.text = StatsFormat.formatFreed(lastRun.savedBytes)
         savedDetail.text = context.getString(
             R.string.stats_freed_detail,
-            files,
-            StatsFormat.formatWhen(at)
+            lastRun.savedFiles,
+            StatsFormat.formatWhen(lastRun.id)
         )
-    }
-
-    companion object {
-        private const val KEY_SAVED = "stats_saved_bytes"
-        private const val KEY_FILES = "stats_saved_files"
-        private const val KEY_AT = "stats_saved_at"
     }
 }

@@ -104,4 +104,23 @@
 
     <string name="channel_name">Komprimierung</string>
     <string name="channel_description">Fortschritt beim Verkleinern mehrerer Dateien</string>
+
+    <!-- Statistikseite: eigene Ansicht, eigene Praefixe (runstats_), damit
+         sie nicht mit den Zahlen der Speichertafel kollidieren. -->
+    <string name="runstats_title">Statistik</string>
+    <string name="runstats_sub">Was die Läufe insgesamt gebracht haben. Gerechnet wird über alle Läufe, die je auf diesem Gerät fertig geworden sind.</string>
+    <string name="runstats_total_label">INSGESAMT GESPART</string>
+    <string name="runstats_runs_label">LÄUFE</string>
+    <string name="runstats_files_label">DATEIEN</string>
+    <string name="runstats_saved_files_label">KLEINER GEMACHT</string>
+    <string name="runstats_average_label">JE LAUF</string>
+    <string name="runstats_list_label">LÄUFE</string>
+    <string name="runstats_back">Zurück</string>
+    <string name="runstats_empty">Noch kein Lauf abgeschlossen. Sobald ein Lauf durch ist, steht hier, was er gebracht hat.</string>
+    <string name="runstats_footer">Eine Zeile je Lauf, die letzten %1$d. Ältere fallen aus der Liste, zählen aber in der Summe weiter – die Datei bleibt dadurch klein.</string>
+    <string name="runstats_run_files">%1$d von %2$d Dateien kleiner</string>
+    <string name="runstats_run_saved">−%1$s</string>
+    <string name="runstats_run_nothing_saved">nichts gespart</string>
+    <string name="button_stats">Statistik</string>
+    <string name="total_saved">Insgesamt gespart: %1$s in %2$d Läufen</string>
 </resources>

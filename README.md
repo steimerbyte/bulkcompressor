@@ -59,6 +59,9 @@ Auswahl** oben, dann **Video**, **Bilder**, **Ausgabe** und die
 **Optionen**, darunter Speicherstand und die Zusammenfassung der
 Einstellungen.
 
+Oben rechts im Kopf sitzt ein **Diagramm-Symbol** — es öffnet die
+Statistikseite (siehe unten).
+
 Der **Startknopf sitzt fest am unteren Rand** und wird von der Seite nicht
 weggescrollt — bei einem Ordner mit hunderten Dateien ist er sonst erst
 nach langem Wischen zu erreichen. Das Protokoll liegt zwischen Inhalt und
@@ -193,6 +196,39 @@ dort nichts; die Datei entsteht mit der ersten Zeile.
 * **App-privat als Rückfallebene:** `files/logs/app.log` (512 KiB,
   rotierend) — hieraus holt die App beim Start den Vorlauf, wenn der
   Download-Ordner mal nicht beschreibbar ist.
+
+## Statistik
+
+Die Seite hinter dem Diagramm-Symbol beantwortet eine andere Frage als der
+Hauptbildschirm: nicht „was mache ich jetzt", sondern **„was hat es
+gebracht"**. Deshalb ein eigener Bildschirm — im Hauptbildschirm hätte die
+Liste der Läufe nur Platz von der Auswahl weggenommen.
+
+Oben stehen die Summen über **alle** Läufe: gesparte Bytes, Anzahl der
+Läufe, Dateien, davon die kleiner gewordenen und der Durchschnitt je Lauf.
+Darunter eine Zeile je Lauf, neuester zuerst, mit Ordner, Zeitpunkt und
+Ergebnis. Der Balken einer Zeile ist **relativ zum größten Lauf** — 20 MB
+neben 4 GB wäre in einem absoluten Maßstab nicht mehr zu sehen.
+
+Was als **Erfolg** zählt, ist eng definiert: „kleiner gemacht" sind die
+Dateien, die der Lauf wirklich geschrieben hat — übersprungene
+(Datei schon klein genug, Betragslimit nicht erreicht) und gescheiterte
+zählen nicht mit. Ein Lauf, der gar nichts kleiner gemacht hat, steht
+trotzdem in der Liste und sagt das („nichts gespart"); er hat ja
+stattgefunden. Ein Lauf ohne eine einzige bearbeitete Datei bekommt
+gar keinen Eintrag.
+
+Der Stand liegt in `filesDir/run-history.json`, geschrieben vom **Dienst**,
+nicht von der Oberfläche. Das ist der entscheidende Punkt: ein Lauf endet
+auch dann richtig, wenn beim Abschluss keine Activity existiert. Die Datei
+bleibt klein — je Lauf eine Zeile mit fünf Feldern, begrenzt auf die
+letzten 100 Läufe. Ältere fallen aus der Liste, zählen aber **weiter in
+der Summe**: „insgesamt gespart" stimmt dadurch über die ganze Lebenszeit
+der App, während die Datei dauerhaft bei wenigen Kilobyte bleibt.
+
+Dieselbe Zahl steht auch auf dem Hauptbildschirm in der Speichertafel
+(„Insgesamt gespart: 4,50 GB in 4 Läufen"), und zwar unabhängig davon, was
+der letzte Lauf gebracht hat.
 
 ## Lange Läufe
 

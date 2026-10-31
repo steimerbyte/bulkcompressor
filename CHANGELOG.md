@@ -4,6 +4,37 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.6.0] – 2026-10-31
+
+### Hinzugefügt
+
+- **Statistikseite** (Diagramm-Symbol oben rechts): Summen über alle
+  Läufe — gesparte Bytes, Läufe, Dateien, davon die kleiner gewordenen,
+  Durchschnitt je Lauf — darunter eine Zeile je Lauf mit Ordner,
+  Zeitpunkt und Ergebnis, Balken relativ zum größten Lauf. Die Werte
+  bleiben über App-Neustarts erhalten.
+- **Summenzeile auf dem Hauptbildschirm**: „Insgesamt gespart: 4,50 GB
+  in 4 Läufen" in der Speichertafel.
+- Die Statistik wird vom **Dienst** geschrieben (`filesDir/run-history.json`),
+  nicht von der Oberfläche. Ein Lauf zählt damit auch dann, wenn beim
+  Abschluss keine Activity existiert — genau der Fall, in dem die
+  bisherige Freigabe-Zahl verloren ging, weil sie nur im
+  Activity-Zustand stand.
+
+### Geändert
+
+- Die Speichertafel liest den letzten Lauf aus der Historie statt aus
+  eigenen `SharedPreferences`. Vorher gab es zwei Stände derselben Zahl;
+  Tafel und Statistikseite konnten verschiedene Werte zeigen.
+- Datei bleibt klein: je Lauf fünf Felder, begrenzt auf die letzten 100
+  Läufe. Ältere fallen aus der Liste, zählen aber weiter in der Summe.
+
+### Behoben
+
+- Die Fusszeile der Statistikseite zeigte `%1$d` statt der Zahl. Die
+  Fusszeile erscheint jetzt nur noch, wenn es eine Liste gibt, und ein
+  Test prüft, dass kein Platzhalter im Text stehen bleibt.
+
 ## [1.5.0] – 2026-10-31
 
 ### Geändert

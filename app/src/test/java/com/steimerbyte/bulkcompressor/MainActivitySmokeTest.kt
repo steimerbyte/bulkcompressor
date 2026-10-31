@@ -11,7 +11,8 @@ import com.steimerbyte.bulkcompressor.model.CompressSettings
 import com.steimerbyte.bulkcompressor.model.MediaItem
 import com.steimerbyte.bulkcompressor.model.MediaKind
 import com.steimerbyte.bulkcompressor.model.ScanResult
-import com.steimerbyte.bulkcompressor.ui.StatsBoard
+import com.steimerbyte.bulkcompressor.stats.RunHistory
+import com.steimerbyte.bulkcompressor.stats.RunRecord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -19,6 +20,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
@@ -236,43 +238,51 @@ class MainActivitySmokeTest {
     // Speichertafel
     // ------------------------------------------------------------------
 
-    private fun board(activity: MainActivity): StatsBoard = StatsBoard(
-        activity,
-        activity.findViewById(R.id.stats_board),
-        activity.getSharedPreferences(CompressSettings.PREFS, Context.MODE_PRIVATE)
-    )
+    /**
+     * Legt einen Stand der Laufhistorie an, bevor die Activity entsteht -
+     * genau so, wie ihn der Dienst hinterlaesst.
+     */
+    private fun seedHistory(vararg runs: RunRecord) {
+        val store = RunHistory.of(RuntimeEnvironment.getApplication())
+        store.clear()
+        runs.forEach { store.record(it) }
+    }
 
-    @Test
-    fun `speichertafel zeigt heap und geraetespeicher`() {
+    private fun run(id: Long, folder: String = "Intern / DCIM", files: Int = 120, smaller: Int = 120, bytes: Long) =
+        RunRecord(id = id, folder = folder, files = files, savedFiles = smaller, savedBytes = bytes)
+
+    private fun activityWithHistory(): MainActivity {
         val activity = activity()
+        activity.awaitHistoryForTest()
         shadowOf(Looper.getMainLooper()).idle()
-
-        val heap = activity.findViewById<TextView>(R.id.text_stats_heap).text.toString()
-        val total = activity.findViewById<TextView>(R.id.text_stats_heap_total).text.toString()
-        val device = activity.findViewById<TextView>(R.id.text_stats_device).text.toString()
-        val state = activity.findViewById<TextView>(R.id.text_stats_memory_state).text.toString()
-
-        assertTrue("Heap-Zeile ohne Einheit: \"$heap\"", heap.endsWith("MB") || heap.endsWith("GB"))
-        assertTrue("Gesamtzeile ohne Schraegstrich: \"$total\"", total.startsWith("/ "))
-        assertTrue("Geraetezeile fehlt: \"$device\"", device.startsWith("Gerät:"))
-        assertTrue("Zustand unbekannt: \"$state\"", state in setOf("FREI", "KNAPP", "SEHR KNAPP"))
+        return activity
     }
 
     @Test
-    fun `freigabe erscheint erst nach erfolgreichem lauf`() {
-        val activity = activity()
-        val group = activity.findViewById<View>(R.id.group_stats_saved)
-        assertEquals("Ohne Lauf darf keine Zahl dastehen", View.GONE, group.visibility)
+    fun `ohne lauf keine freigabe und keine summenzeile`() {
+        seedHistory()
+        val activity = activityWithHistory()
 
-        board(activity).onRunFinished(
-            running = false,
-            cancelled = false,
-            finished = true,
-            savedBytes = 12L * 1024 * 1024 * 1024,
-            files = 120
+        assertEquals(
+            "Ohne Lauf darf keine Zahl dastehen",
+            View.GONE,
+            activity.findViewById<View>(R.id.group_stats_saved).visibility
         )
+        assertEquals(
+            View.GONE,
+            activity.findViewById<TextView>(R.id.text_total_saved).visibility
+        )
+    }
 
-        assertEquals(View.VISIBLE, group.visibility)
+    @Test
+    fun `letzter lauf steht in der speichertafel`() {
+        seedHistory(run(id = 1_700_000_000_000, bytes = 12L * 1024 * 1024 * 1024, files = 120))
+        val activity = activityWithHistory()
+
+        assertEquals(
+            View.VISIBLE,
+            activity.findViewById<View>(R.id.group_stats_saved).visibility
+        )
         assertEquals(
             "12,00 GB",
             activity.findViewById<TextView>(R.id.text_stats_saved).text.toString()
@@ -282,28 +292,27 @@ class MainActivitySmokeTest {
     }
 
     @Test
-    fun `abgebrochener lauf setzt keine freigabe`() {
-        val activity = activity()
-        val group = activity.findViewById<View>(R.id.group_stats_saved)
-
-        board(activity).onRunFinished(
-            running = false,
-            cancelled = true,
-            finished = false,
-            savedBytes = 5L * 1024 * 1024 * 1024,
-            files = 40
+    fun `summenzeile zaehlt alle laeufe`() {
+        seedHistory(
+            run(id = 1_700_000_000_000, bytes = 1L shl 30),
+            run(id = 1_700_000_100_000, bytes = 1L shl 30)
         )
+        val activity = activityWithHistory()
 
-        assertEquals("Ein Abbruch ist kein Ergebnis", View.GONE, group.visibility)
+        val text = activity.findViewById<TextView>(R.id.text_total_saved).text.toString()
+        assertEquals(View.VISIBLE, activity.findViewById<TextView>(R.id.text_total_saved).visibility)
+        assertTrue("Summe fehlt: \"$text\"", text.startsWith("Insgesamt gespart: 2,00 GB"))
+        assertTrue("Laufzahl fehlt: \"$text\"", text.endsWith("in 2 Läufen"))
     }
 
     @Test
-    fun `waehrend des laufs keine freigabe`() {
-        val activity = activity()
-        val group = activity.findViewById<View>(R.id.group_stats_saved)
+    fun `lauf ohne einsparung erscheint nicht als freigabe`() {
+        seedHistory(run(id = 1_700_000_000_000, bytes = 0, files = 4, smaller = 0))
+        val activity = activityWithHistory()
 
-        board(activity).onRunFinished(true, false, false, 3L * 1024 * 1024 * 1024, 30)
-
-        assertEquals(View.GONE, group.visibility)
+        // Kein Platz gewonnen: die Tafel schweigt, die Historie zaehlt den
+        // Lauf trotzdem - er ist gelaufen.
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.group_stats_saved).visibility)
+        assertEquals(View.VISIBLE, activity.findViewById<TextView>(R.id.text_total_saved).visibility)
     }
 }

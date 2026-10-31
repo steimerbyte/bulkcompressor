@@ -10,7 +10,6 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.provider.DocumentsContract
 import android.provider.Settings
 import android.view.View
 import android.widget.Button
@@ -36,12 +35,17 @@ import com.steimerbyte.bulkcompressor.model.OutputMode
 import com.steimerbyte.bulkcompressor.model.ScanResult
 import com.steimerbyte.bulkcompressor.model.VideoCodec
 import com.steimerbyte.bulkcompressor.model.VideoMode
+import com.steimerbyte.bulkcompressor.scan.FolderPath
+import com.steimerbyte.bulkcompressor.stats.History
+import com.steimerbyte.bulkcompressor.stats.RunHistory
+import com.steimerbyte.bulkcompressor.stats.StatsActivity
 import com.steimerbyte.bulkcompressor.scan.SafScanner
 import com.steimerbyte.bulkcompressor.ui.ChipRow
 import com.steimerbyte.bulkcompressor.ui.MediaAdapter
 import com.steimerbyte.bulkcompressor.ui.SegmentBar
 import com.steimerbyte.bulkcompressor.ui.SoundKit
 import com.steimerbyte.bulkcompressor.ui.StatsBoard
+import com.steimerbyte.bulkcompressor.ui.StatsFormat
 import com.steimerbyte.bulkcompressor.ui.TerminalPanel
 
 class MainActivity : AppCompatActivity(), JobBus.Listener {
@@ -53,6 +57,16 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private val selectedIds = LinkedHashSet<String>()
 
     private lateinit var stats: StatsBoard
+
+    /**
+     * Ein einzelner Hintergrund-Thread fuer die Laufhistorie. Ein Thread
+     * statt eines neuen je Aufruf, weil "fertig" und "onStart" dicht
+     * beieinander liegen koennen und zwei Leser sich sonst die Reihenfolge
+     * streitig machen.
+     */
+    private val historyLoader = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "run-history").apply { isDaemon = true }
+    }
     private val statsHandler = Handler(Looper.getMainLooper())
     private val statsTick = object : Runnable {
         override fun run() {
@@ -82,6 +96,8 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private lateinit var textPercent: TextView
     private lateinit var textCurrent: TextView
     private lateinit var textTotals: TextView
+    private lateinit var textTotalSaved: TextView
+    private lateinit var buttonStats: android.widget.ImageButton
     private lateinit var textActiveConfig: TextView
     private lateinit var statusVideo: TextView
     private lateinit var statusImages: TextView
@@ -170,7 +186,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         setupSliders()
         setupToggles()
 
-        stats = StatsBoard(this, findViewById(R.id.stats_board), prefs)
+        stats = StatsBoard(this, findViewById(R.id.stats_board))
 
         adapter = MediaAdapter { item -> toggleSelection(item) }
         listMedia.layoutManager = LinearLayoutManager(this)
@@ -180,6 +196,12 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             SoundKit.play(SoundKit.Click.TICK)
             pickFolder()
         }
+        buttonStats.setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
+            runCatching { startActivity(Intent(this, StatsActivity::class.java)) }
+                .onFailure { Log.w(TAG, "Statistikseite nicht zu oeffnen", it) }
+        }
+
         buttonStart.setOnClickListener {
             SoundKit.play(SoundKit.Click.THUNK)
             onStartButtonClicked()
@@ -217,6 +239,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         super.onStart()
         JobBus.addListener(this)
         renderStartButton()
+        refreshHistory()
         Log.addListener(logListener)
         if (this::terminal.isInitialized) terminal.setLines(Log.snapshot(TERMINAL_LINES))
     }
@@ -226,6 +249,14 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         JobBus.removeListener(this)
         Log.removeListener(logListener)
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        // Der Historien-Leser haengt an dieser Instanz; ohne ihn zu
+        // beenden bliebe nach dem Schliessen ein Thread mit einer
+        // toten Activity in der Warteschlange.
+        historyLoader.shutdownNow()
+        super.onDestroy()
     }
 
     override fun onResume() {
@@ -267,6 +298,8 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         textPercent = findViewById(R.id.text_percent)
         textCurrent = findViewById(R.id.text_current)
         textTotals = findViewById(R.id.text_totals)
+        textTotalSaved = findViewById(R.id.text_total_saved)
+        buttonStats = findViewById(R.id.button_stats)
         textActiveConfig = findViewById(R.id.text_active_config)
         statusVideo = findViewById(R.id.status_video)
         statusImages = findViewById(R.id.status_images)
@@ -636,7 +669,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     }
 
     private fun startScan(uri: Uri) {
-        textFolder.text = displayPath(uri)
+        textFolder.text = FolderPath.display(uri)
         textSummary.visibility = View.VISIBLE
         textSummary.text = getString(R.string.scan_scanning)
         Thread({
@@ -742,14 +775,6 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         // Flaeche besser in der Dateiliste aufgehoben.
         textSub.visibility = if (treeUri == null) View.VISIBLE else View.GONE
     }
-
-    private fun displayPath(uri: Uri): String = runCatching {
-        val documentId = DocumentsContract.getTreeDocumentId(uri)
-        val volume = documentId.substringBefore(':')
-        val path = documentId.substringAfter(':', "")
-        val volumeName = if (volume == "primary") "Intern" else volume
-        if (path.isBlank()) volumeName else "$volumeName / ${path.replace("/", " / ")}"
-    }.getOrDefault(uri.toString())
 
     // ------------------------------------------------------------------
     // Schätzung / Zusammenfassung
@@ -953,20 +978,60 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
                 }
             }
 
-            stats.onRunFinished(
-                running = state.running,
-                cancelled = state.cancelled,
-                finished = state.finished,
-                savedBytes = state.savedBytes,
-                files = state.done
-            )
+            // Der Dienst schreibt den Lauf beim Abschluss in die
+            // Historie; hier wird sie nur noch nachgelesen. Das ist der
+            // einzige Weg, der auch stimmt, wenn diese Oberflaeche beim
+            // Abschluss gar nicht existierte.
+            if (state.finished && !state.running) refreshHistory()
         }
+    }
+
+    /**
+     * Liest die Laufhistorie im Hintergrund und stellt Tafel und
+     * Summenzeile darauf ein. Die Datei ist klein, aber sie ist eine
+     * Datei - auf dem Hauptthread hat sie beim Zustandswechsel nichts
+     * zu suchen.
+     */
+    private fun refreshHistory() {
+        val app = applicationContext
+        historyLoader.execute {
+            val history = runCatching { RunHistory.of(app).load() }.getOrDefault(History())
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                stats.renderSaved(history.runs.lastOrNull())
+                renderTotalSaved(history)
+            }
+        }
+    }
+
+    /**
+     * Nur fuer Tests: wartet auf das Ende des Historien-Lesers. Die
+     * Activity liest im Hintergrund, ein Test kann deshalb nicht einfach
+     * nach dem Start nachsehen.
+     */
+    internal fun awaitHistoryForTest(timeoutMs: Long = 2000) {
+        runCatching { historyLoader.submit {}.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) }
+    }
+
+    /** Summe ueber alle Laeufe - erst ab dem ersten fertigen Lauf. */
+    private fun renderTotalSaved(history: History) {
+        val totals = history.totals
+        if (totals.runs <= 0) {
+            textTotalSaved.visibility = View.GONE
+            return
+        }
+        textTotalSaved.visibility = View.VISIBLE
+        textTotalSaved.text = getString(
+            R.string.total_saved,
+            StatsFormat.formatFreed(totals.savedBytes),
+            totals.runs
+        )
     }
 
     /** Nur fuer Tests: Ordner und Scanergebnis ohne echten ContentProvider. */
     internal fun applyScanForTest(tree: Uri, result: ScanResult) {
         treeUri = tree
-        textFolder.text = displayPath(tree)
+        textFolder.text = FolderPath.display(tree)
         applyScan(result)
     }
 

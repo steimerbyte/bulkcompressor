@@ -44,14 +44,37 @@
                  App tut; sobald ein Ordner geladen ist, kostet er nur
                  Platz, der der Dateiliste fehlt. -->
 
-            <TextView
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:fontFamily="monospace"
-                android:letterSpacing="0.4"
-                android:text="●"
-                android:textColor="@color/nothing_dim"
-                android:textSize="12sp" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:fontFamily="monospace"
+                    android:letterSpacing="0.4"
+                    android:text="●"
+                    android:textColor="@color/nothing_dim"
+                    android:textSize="12sp" />
+
+                <!-- Einstieg in die Statistik: eigene Seite, deshalb hier
+                     oben rechts und nicht als Abschnitt im Ablauf unten. -->
+                <ImageButton
+                    android:id="@+id/button_stats"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="-10dp"
+                    android:layout_marginEnd="-12dp"
+                    android:layout_marginBottom="-10dp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/button_stats"
+                    android:padding="10dp"
+                    android:src="@drawable/ic_stats"
+                    android:tint="@color/nothing_grey" />
+            </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
@@ -780,6 +803,21 @@
                         android:textColor="@color/nothing_grey"
                         android:textSize="10sp" />
                 </LinearLayout>
+
+                <!-- Summe ueber alle Laeufe. Steht ausserhalb der
+                     Freigabe-Gruppe, weil sie unabhaengig davon gilt, was
+                     der letzte Lauf gebracht hat. -->
+                <TextView
+                    android:id="@+id/text_total_saved"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/nothing_grey"
+                    android:textSize="10sp"
+                    android:visibility="gone" />
             </LinearLayout>
 
             <!-- ====================== 7. ZUSAMMENFASSUNG ====================== -->
@@ -917,6 +955,7 @@
                 android:maxLines="1"
                 android:textColor="@color/nothing_grey"
                 android:textSize="10sp" />
+
         </LinearLayout>
 
         <Button

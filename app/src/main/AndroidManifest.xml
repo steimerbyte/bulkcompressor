@@ -69,6 +69,18 @@
         </activity>
 
         <!--
+            Statistikseite: eigene Activity, exportiert nichts, nur aus der
+            App heraus erreichbar. parentActivityName setzt den Aufwaerts-
+            Pfeil der Systemleiste auf den Hauptbildschirm.
+        -->
+        <activity
+            android:name=".stats.StatsActivity"
+            android:exported="false"
+            android:label="@string/runstats_title"
+            android:parentActivityName=".MainActivity"
+            android:theme="@style/Theme.BulkCompressor" />
+
+        <!--
             exported="false": der Dienst nimmt nur Befehle aus der eigenen
             App an. Ein Kompressionslauf darf nicht von aussen startbar sein.
         -->

@@ -22,7 +22,10 @@ import com.steimerbyte.bulkcompressor.R
 import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.engine.MemoryGuard
 import com.steimerbyte.bulkcompressor.model.CompressSettings
+import com.steimerbyte.bulkcompressor.scan.FolderPath
 import com.steimerbyte.bulkcompressor.scan.SafScanner
+import com.steimerbyte.bulkcompressor.stats.RunHistory
+import com.steimerbyte.bulkcompressor.stats.runRecord
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -225,10 +228,20 @@ class CompressionService : Service(), JobBus.Listener {
             } catch (t: Throwable) {
                 JobBus.appendLog("ABBRUCH: ${t.message ?: t.javaClass.simpleName}")
                 Log.e("Service", "Lauf abgebrochen nach ${System.currentTimeMillis() - workingStart} ms", t)
+                // Vor der Abschlussmeldung notieren: die Oberflaeche liest
+                // die Historie in genau dem Moment, in dem sie "fertig"
+                // sieht. recordRun ist idempotent, der finally-Zweig
+                // schreibt denselben Lauf kein zweites Mal.
+                recordRun(treeUri)
                 JobBus.publish(
                     JobBus.state.copy(running = false, finished = true, overall = 0f)
                 )
             } finally {
+                // Bewusst vor finishForeground: das veroeffentlicht den
+                // Endzustand, und die Oberflaeche liest die Historie genau
+                // dann nach. Hier und nicht in der Activity - der Lauf
+                // endet auch dann richtig, wenn keine Oberflaeche existiert.
+                recordRun(treeUri)
                 logRunEnd(
                     threadName,
                     workingStart,
@@ -411,6 +424,30 @@ class CompressionService : Service(), JobBus.Listener {
             getSystemService(NotificationManager::class.java)
                 .notify(NOTIFICATION_ID, buildNotification(text, null, 0, false))
         }
+    }
+
+    /**
+     * Haelt den abgeschlossenen Lauf in der Statistik fest.
+     *
+     * Ein Lauf ohne eine einzige bearbeitete Datei wird nicht notiert -
+     * er hat nichts zu berichten. Ein abgebrochener Lauf zaehlt mit dem,
+     * was er bis dahin geschafft hat: die Bytes sind wirklich frei
+     * geworden.
+     */
+    private fun recordRun(tree: Uri) {
+        runCatching {
+            val state = JobBus.state
+            val entry = runRecord(
+                id = runStartedAt,
+                folder = FolderPath.display(tree),
+                total = state.total,
+                done = state.done,
+                skipped = state.skipped,
+                failed = state.failed,
+                savedBytes = state.savedBytes
+            ) ?: return
+            RunHistory.of(applicationContext).record(entry)
+        }.onFailure { Log.w("Service", "Lauf nicht in die Statistik geschrieben", it) }
     }
 
     private fun finishForeground(stopService: Boolean = true) {

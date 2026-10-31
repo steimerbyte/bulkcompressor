@@ -12,6 +12,8 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
+import android.os.Looper
 
 /**
  * Die Statistikseite, ohne Geraet: Summe, Zeilen und die eine Zahl, die
@@ -24,7 +26,12 @@ class StatsActivityTest {
         val store = RunHistory.of(RuntimeEnvironment.getApplication())
         store.clear()
         runs.forEach { store.record(it) }
-        return Robolectric.buildActivity(StatsActivity::class.java).setup().get()
+        val activity = Robolectric.buildActivity(StatsActivity::class.java).setup().get()
+        // Die Seite liest die Datei im Hintergrund; ohne diese zwei
+        // Schritte steht der Test vor dem ersten Bild.
+        activity.awaitHistoryForTest()
+        shadowOf(Looper.getMainLooper()).idle()
+        return activity
     }
 
     private fun run(id: Long, savedBytes: Long, files: Int = 10, smaller: Int = 8) =

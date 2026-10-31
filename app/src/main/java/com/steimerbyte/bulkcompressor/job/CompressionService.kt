@@ -57,12 +57,13 @@ class CompressionService : Service(), JobBus.Listener {
     private var pendingStart: Intent? = null
     private var wakeLockRenewals = 0
 
-    private val renewHandler by lazy { Handler(Looper.getMainLooper()) }
+    /** Alles, was auf dem Haupt-Thread laufen muss: Meldungen, Wachhund, Start. */
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
     private val renewLock = object : Runnable {
         override fun run() {
             val lock = wakeLock ?: return
             if (lock.isHeld) {
-                renewHandler.postDelayed(this, WAKE_LOCK_RENEW_MS)
+                mainHandler.postDelayed(this, WAKE_LOCK_RENEW_MS)
                 return
             }
             val renewed = runCatching { lock.acquire(WAKE_LOCK_TIMEOUT_MS) }
@@ -74,7 +75,7 @@ class CompressionService : Service(), JobBus.Listener {
                         "${System.currentTimeMillis() - runStartedAt} ms · neues Limit" +
                         " ${WAKE_LOCK_TIMEOUT_MS / 60_000} min"
                 )
-                renewHandler.postDelayed(this, WAKE_LOCK_RENEW_MS)
+                mainHandler.postDelayed(this, WAKE_LOCK_RENEW_MS)
             } else {
                 Log.e(
                     "Service",
@@ -270,7 +271,7 @@ class CompressionService : Service(), JobBus.Listener {
                     if (tree == null || docIds.isEmpty()) {
                         finishForeground()
                     } else {
-                        Handler(Looper.getMainLooper()).post {
+                        mainHandler.post {
                             beginRun(Uri.parse(tree), docIds)
                         }
                     }
@@ -338,7 +339,23 @@ class CompressionService : Service(), JobBus.Listener {
     // Benachrichtigung
     // ------------------------------------------------------------------
 
+    /**
+     * Fortschritt kommt vom Worker-Thread, die Benachrichtigung gehoert auf
+     * den Haupt-Thread. Ohne diese Umschaltung laufen zwei Staende
+     * gleichzeitig: der Worker meldet hier, waehrend der Haupt-Thread ueber
+     * `beginRun`/`exitWithError` dieselben Felder (Kadenz, Geraetespeicher,
+     * Zaehler) anfasst. Die Umschaltung macht den Pfad einfach: alle
+     * Meldungen werden der Reihe nach auf dem Haupt-Thread abgearbeitet.
+     */
     override fun onState(state: JobBus.State) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            renderState(state)
+        } else {
+            mainHandler.post { renderState(state) }
+        }
+    }
+
+    private fun renderState(state: JobBus.State) {
         if (state.finished || !state.running) return
         val now = System.currentTimeMillis()
         val progressChanged = (state.overall * 100).toInt()
@@ -600,12 +617,12 @@ class CompressionService : Service(), JobBus.Listener {
             Log.w("Service", "Wachhund nach acquire nicht gehalten - Lauf kann einfrieren")
         }
         wakeLock = lock
-        renewHandler.removeCallbacks(renewLock)
-        renewHandler.postDelayed(renewLock, WAKE_LOCK_RENEW_MS)
+        mainHandler.removeCallbacks(renewLock)
+        mainHandler.postDelayed(renewLock, WAKE_LOCK_RENEW_MS)
     }
 
     private fun releaseWakeLock() {
-        renewHandler.removeCallbacks(renewLock)
+        mainHandler.removeCallbacks(renewLock)
         val lock = wakeLock
         wakeLock = null
         if (lock == null) return

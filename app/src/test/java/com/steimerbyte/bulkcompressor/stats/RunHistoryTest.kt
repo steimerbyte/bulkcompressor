@@ -79,6 +79,35 @@ class RunHistoryTest {
     }
 
     @Test
+    fun `gleichzeitige Schreiber verlieren keinen Lauf`() {
+        // Der Dienst schreibt waehrend eines Laufs, die Oberflaeche liest -
+        // das sind zwei Instanzen auf zwei Threads. Ohne ein Schloss je
+        // Datei wuerde ein Lesen-Schreiben-Paar den Eintrag eines anderen
+        // ueberschreiben.
+        val threads = 6
+        val perThread = 10
+        val start = java.util.concurrent.CountDownLatch(1)
+        val done = java.util.concurrent.CountDownLatch(threads)
+        repeat(threads) { slot ->
+            Thread({
+                start.await()
+                repeat(perThread) { index ->
+                    RunHistory(file()).record(record(id = slot * 1000L + index))
+                }
+                done.countDown()
+            }, "schreiber-$slot").start()
+        }
+
+        start.countDown()
+        assertTrue("Schreiber haengen", done.await(20, java.util.concurrent.TimeUnit.SECONDS))
+
+        val history = RunHistory(file()).load()
+        assertEquals(threads * perThread, history.totals.runs)
+        assertEquals(threads * perThread, history.runs.size)
+        assertEquals(threads * perThread, history.runs.map { it.id }.toSet().size)
+    }
+
+    @Test
     fun `ohne Datei ist die Historie leer`() {
         val history = RunHistory(file()).load()
         assertEquals(History(), history)

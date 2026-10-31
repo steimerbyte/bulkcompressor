@@ -266,6 +266,41 @@ Die **Speichertafel** ganz oben zeigt das laufend: App-Heap mit
 Segmentbalken (weiß → grau → rot), freier Arbeitsspeicher des Geräts und —
 nach einem erfolgreichen Lauf — den freigewordenen Plattenplatz in GB.
 
+## Threads
+
+Der Haupt-Thread zeichnet, alles Langsame läuft daneben. Welcher Thread
+was tut, ist keine Nebensache: ein Dateizugriff im falschen Thread ist der
+Unterschied zwischen „läuft" und „hängt".
+
+|Thread|Was dort läuft|Warum nicht woanders|
+|---|---|---|
+|`main`|Ansichten, Layout, `NotificationManager.notify`, Rückrufe der Historie|Alles, was eine View anfasst, muss hier laufen.|
+|`ordner-scan`|`SafScanner.scan` (Ordner und Metadaten lesen)|Ein Ordner mit hunderten Dateien liest für Sekunden.|
+|`bulk-compress`|`CompressionJob.run`, dazu das Schreiben der Laufhistorie|Ein Lauf dauert Stunden; der Haupt-Thread ist nach 5 s blockiert.|
+|`log-writer`|private Logdatei und Logdatei im Download-Ordner|Protokollzeilen entstehen auch aus dem Lauf; Schreiben darf ihn nicht bremsen.|
+|`run-history`|Lesen der Statistikdatei|Die Zahl ist eine Datei — auch eine kleine wird nicht auf dem Haupt-Thread gelesen.|
+|Codec-Threads|`MediaCodec` (Decode/Encode), Audio unverändert durchgereicht|Nicht der eigene Code, aber der Grund, warum die Kompression keinen Frame durch den App-Speicher kopiert.|
+
+Drei Grenzen, die daraus folgen:
+
+- **Fortschritt aus dem Worker wird auf dem Haupt-Thread gezeichnet.**
+  `CompressionService.onState` läuft auf dem Thread, der meldet; der Dienst
+  schaltet auf den Haupt-Thread um, bevor er die Benachrichtigung baut.
+  Sonst würden Worker und Haupt-Thread dieselben Felder (Meldungskadenz,
+  Gerätespeicher, Zähler) gleichzeitig schreiben.
+- **Die Historie hat ein Schloss je Datei, nicht je Objekt.** Dienst und
+  Oberfläche halten verschiedene Instanzen auf verschiedenen Threads; ein
+  Schloss je Instanz würde ein Lesen-Schreiben-Paar des einen mit dem
+  Lesen des anderen verschränken.
+- **Ein Abbruch endet im selben `finally` wie ein Erfolg.** Dienstende und
+  Historieeintrag passieren dort, damit kein Pfad einen Lauf ohne Eintrag
+  hinterlässt.
+
+Auf dem Haupt-Thread bleibt bewusst nur wenig: `ActivityManager.getMemoryInfo`
+für die Speichertafel (ein Binder-Aufruf pro Sekunde) und das erste Laden
+der `SharedPreferences` beim Start — beides klein und ohne Datei-I/O im
+eigenen Code.
+
 ## Technik
 
 * **Video:** Decoder → Surface → Encoder (MediaCodec), Audio wird

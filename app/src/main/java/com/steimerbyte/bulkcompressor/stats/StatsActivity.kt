@@ -33,6 +33,9 @@ class StatsActivity : AppCompatActivity() {
     private lateinit var textEmpty: TextView
     private lateinit var textFooter: TextView
 
+    private val readerDelegate = lazy { HistoryReader(applicationContext) }
+    private val reader by readerDelegate
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_stats)
@@ -47,12 +50,29 @@ class StatsActivity : AppCompatActivity() {
         textFooter = findViewById(R.id.text_stats_footer)
 
         findViewById<View>(R.id.button_stats_back).setOnClickListener { finish() }
-        // Bewusst hier und nicht im Hintergrund: die Datei ist auf
-        // RunHistory.MAX_RUNS Eintraege begrenzt (wenige Kilobyte) und
-        // wird beim Oeffnen dieses einen Bildschirms genau einmal gelesen.
-        // Der Hauptbildschirm macht es anders, weil er die Historie bei
-        // jedem Zustandswechsel waehrend eines Laufs nachliest.
-        render(RunHistory.of(this).load())
+        loadHistory()
+    }
+
+    /**
+     * Die Datei ist klein, aber sie ist eine Datei: gelesen wird im
+     * Hintergrund, gezeichnet wird auf dem Haupt-Thread. Derselbe Weg wie
+     * im Hauptbildschirm - die Regel gilt fuer jede Datei, nicht nach
+     * Groesse.
+     */
+    private fun loadHistory() {
+        reader.read { history ->
+            if (isFinishing || isDestroyed) return@read
+            render(history)
+        }
+    }
+
+    /**
+     * Nur fuer Tests: wartet auf das Ende des Lesers. Gezeichnet wird im
+     * Rueckruf auf dem Haupt-Thread, der im Test noch abgearbeitet werden
+     * muss.
+     */
+    internal fun awaitHistoryForTest(timeoutMs: Long = 2000) {
+        reader.awaitForTest(timeoutMs)
     }
 
     private fun render(history: History) {
@@ -118,6 +138,11 @@ class StatsActivity : AppCompatActivity() {
             (System.currentTimeMillis() - timestamp).coerceAtLeast(0)
         )
         return if (days < 7) "${StatsFormat.formatWhen(timestamp)} · $full" else full
+    }
+
+    override fun onDestroy() {
+        if (readerDelegate.isInitialized()) reader.shutdown()
+        super.onDestroy()
     }
 
     private companion object {

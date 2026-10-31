@@ -92,7 +92,16 @@ fun runRecord(
  */
 class RunHistory(private val file: File) {
 
-    private val lock = Any()
+    /**
+     * Ein Schloss je Datei, nicht je Objekt.
+     *
+     * Der Dienst schreibt und die Oberflaeche liest - das sind zwei
+     * Instanzen auf zwei Threads. Mit einem Schloss je Instanz wuerde ein
+     * Lesen-Schreiben-Paar (lesen, einen Lauf anhaengen, schreiben) des
+     * Dienstes mit einem gleichzeitigen Lesevorgang verschraenken, und ein
+     * zweiter Schreiber koennte den Eintrag des ersten ueberschreiben.
+     */
+    private val lock: Any = locks.computeIfAbsent(file.absolutePath) { Any() }
 
     fun load(): History = synchronized(lock) { read() }
 
@@ -203,6 +212,9 @@ class RunHistory(private val file: File) {
     )
 
     companion object {
+        /** Ein Schloss je Pfad: alle Instanzen auf dieselbe Datei teilen es. */
+        private val locks = java.util.concurrent.ConcurrentHashMap<Any, Any>()
+
         private const val FORMAT = 1
         private const val KEY_VERSION = "v"
         private const val KEY_TOTALS = "t"

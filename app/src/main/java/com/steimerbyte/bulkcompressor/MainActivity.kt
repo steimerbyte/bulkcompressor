@@ -37,7 +37,7 @@ import com.steimerbyte.bulkcompressor.model.VideoCodec
 import com.steimerbyte.bulkcompressor.model.VideoMode
 import com.steimerbyte.bulkcompressor.scan.FolderPath
 import com.steimerbyte.bulkcompressor.stats.History
-import com.steimerbyte.bulkcompressor.stats.RunHistory
+import com.steimerbyte.bulkcompressor.stats.HistoryReader
 import com.steimerbyte.bulkcompressor.stats.StatsActivity
 import com.steimerbyte.bulkcompressor.scan.SafScanner
 import com.steimerbyte.bulkcompressor.ui.ChipRow
@@ -59,14 +59,11 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private lateinit var stats: StatsBoard
 
     /**
-     * Ein einzelner Hintergrund-Thread fuer die Laufhistorie. Ein Thread
-     * statt eines neuen je Aufruf, weil "fertig" und "onStart" dicht
-     * beieinander liegen koennen und zwei Leser sich sonst die Reihenfolge
-     * streitig machen.
+     * Die Laufhistorie wird abseits des Haupt-Threads gelesen und hier
+     * gezeichnet; die Trennung steckt in [HistoryReader].
      */
-    private val historyLoader = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "run-history").apply { isDaemon = true }
-    }
+    private val historyReaderDelegate = lazy { HistoryReader(applicationContext) }
+    private val historyReader by historyReaderDelegate
     private val statsHandler = Handler(Looper.getMainLooper())
     private val statsTick = object : Runnable {
         override fun run() {
@@ -255,7 +252,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         // Der Historien-Leser haengt an dieser Instanz; ohne ihn zu
         // beenden bliebe nach dem Schliessen ein Thread mit einer
         // toten Activity in der Warteschlange.
-        historyLoader.shutdownNow()
+        if (historyReaderDelegate.isInitialized()) historyReader.shutdown()
         super.onDestroy()
     }
 
@@ -993,24 +990,19 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
      * zu suchen.
      */
     private fun refreshHistory() {
-        val app = applicationContext
-        historyLoader.execute {
-            val history = runCatching { RunHistory.of(app).load() }.getOrDefault(History())
-            runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
-                stats.renderSaved(history.runs.lastOrNull())
-                renderTotalSaved(history)
-            }
+        historyReader.read { history ->
+            if (isFinishing || isDestroyed) return@read
+            stats.renderSaved(history.runs.lastOrNull())
+            renderTotalSaved(history)
         }
     }
 
     /**
-     * Nur fuer Tests: wartet auf das Ende des Historien-Lesers. Die
-     * Activity liest im Hintergrund, ein Test kann deshalb nicht einfach
-     * nach dem Start nachsehen.
+     * Nur fuer Tests: wartet auf das Ende des Lesers. Die Activity liest im
+     * Hintergrund, ein Test kann deshalb nicht einfach nachsehen.
      */
     internal fun awaitHistoryForTest(timeoutMs: Long = 2000) {
-        runCatching { historyLoader.submit {}.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) }
+        historyReader.awaitForTest(timeoutMs)
     }
 
     /** Summe ueber alle Laeufe - erst ab dem ersten fertigen Lauf. */

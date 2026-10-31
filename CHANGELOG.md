@@ -4,6 +4,33 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.6.1] – 2026-10-31
+
+### Geändert
+
+- **Fortschritt aus dem Worker wird auf dem Haupt-Thread gezeichnet.**
+  `CompressionService.onState` läuft auf dem Thread, der meldet; der Dienst
+  schaltet jetzt auf den Haupt-Thread um, bevor er die Benachrichtigung
+  baut. Vorher schrieben Worker und Haupt-Thread dieselben Felder
+  (Meldungskadenz, Gerätespeicher, Zähler) ungeschützt nebeneinander.
+- **Die Statistikseite liest ihre Datei im Hintergrund.** Sie las sie in
+  `onCreate` auf dem Haupt-Thread. Lesen und Zeichnen sind jetzt getrennt
+  (`HistoryReader`, Thread `run-history`), dieselbe Regel wie im
+  Hauptbildschirm — eine eigene Klasse statt zwei fast gleicher
+  Executors.
+- **Die Laufhistorie hat ein Schloss je Datei, nicht je Objekt.** Dienst
+  und Oberfläche halten verschiedene Instanzen auf verschiedenen Threads;
+  mit einem Schloss je Instanz konnte ein Lesen-Schreiben-Paar des
+  Dienstes den Eintrag überschreiben (im Test mit sechs gleichzeitigen
+  Schreibern: 20 von 60 Läufen überlebten).
+
+### Behoben
+
+- Der Dienst meldete beim Start einen Fortschritt aus einem zurück­
+  gebliebenen Bus-Zustand, wenn derselbe Zustand noch im Prozess stand.
+  Betraf nur den Zustandsüberlauf zwischen zwei Läufen; die Tests treten
+  jetzt mit zurückgesetztem Bus an.
+
 ## [1.6.0] – 2026-10-31
 
 ### Hinzugefügt

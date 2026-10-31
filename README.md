@@ -223,9 +223,12 @@ nach einem erfolgreichen Lauf — den freigewordenen Plattenplatz in GB.
   Liste und Werkzeugleiste, tieferer für Schalter, größerer für
   START. Beim Ziehen eines Sliders klickt jeder geänderte Schritt,
   gedrosselt auf 25 pro Sekunde (`MIN_GAP_MS`), damit es nicht knattert.
-  Der Ton folgt zusätzlich der Systemeinstellung „Berührungsklänge":
-  ist die aus, bleibt die App still, egal was der Schalter in der App
-  sagt. Abschaltbar über die Zeile **KLICKGERÄUSCHE**.
+  Abschaltbar über die Zeile **KLICKGERÄUSCHE**; zusätzlich schweigt die
+  App im Lautlos- und Vibrationsmodus und bei Systemlautstärke 0. Die
+  Systemeinstellung „Berührungsklänge" schaltet hier **nicht** ab — sie
+  ist auf vielen Geräten ab Werk aus, und dann stand der Schalter in der
+  App sichtbar auf an, ohne dass ein Ton kam. Welche der drei Regeln
+  gerade greift, steht im Protokoll (`Sound`, eine Zeile je Wechsel).
 * **Speicherwächter** (`MemoryGuard`): bewusst *eine* Datei nach der
   anderen, kein paralleles Kodieren — der Speicherbedarf bleibt konstant.
   Die Einordnung ist eine reine Funktion und damit ohne Gerät geprüft.

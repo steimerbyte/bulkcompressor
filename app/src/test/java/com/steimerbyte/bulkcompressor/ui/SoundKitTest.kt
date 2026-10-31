@@ -1,12 +1,14 @@
 package com.steimerbyte.bulkcompressor.ui
 
 import android.content.Context
+import android.media.AudioManager
 import android.provider.Settings
 import com.steimerbyte.bulkcompressor.R
 import com.steimerbyte.bulkcompressor.model.CompressSettings
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -14,22 +16,37 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.shadow.api.Shadow
+import org.robolectric.shadows.ShadowSoundPool
 
 /**
- * Prueft die Entscheidung "klingelt es oder nicht" und die Klickdateien
- * selbst.
+ * Prueft, ob ein Klick tatsaechlich beim Audiosystem ankommt - und ob die
+ * Abschaltgruende greifen.
  *
- * Der Ton haengt an zwei Schaltern: dem in der App und der
- * Systemeinstellung fuer Beruehrungsklaenge. Wer die Systemeinstellung
- * abgeschaltet hat, darf von der App keine Klicks bekommen - genau das
- * ist die Regel, die man beim Selbsttest auf dem Geraet nur schwer
- * merkt.
+ * Zwei Fehler hat dieser Test aufgedeckt, beide ohne Geraet sichtbar:
+ *
+ * 1. Die Sperre gegen zu schnelle Wiederholung verglich gegen
+ *    `Long.MIN_VALUE`; `now - Long.MIN_VALUE` laeuft im Long-Bereich ueber
+ *    und wurde negativ, also war die Bedingung immer wahr. Der Zeitstempel
+ *    wurde erst danach gesetzt - der Ton ging nie los, nicht nur beim
+ *    ersten Mal.
+ * 2. Zusaetzlich hing die App an der Systemeinstellung
+ *    "Beruehrungsklaenge". Die ist auf vielen Geraeten ab Werk aus; der
+ *    Schalter in der App stand dann sichtbar auf an, ohne Ton und ohne
+ *    Grund.
+ *
+ * Alle Einstellungen werden ueber **dasselbe** AudioManager-Objekt
+ * gesetzt, das [SoundKit] benutzt. In Robolectric ist
+ * `getSystemService(AUDIO_SERVICE)` nicht zwingend ein Einzelstueck; ein
+ * zweites Objekt haette einen eigenen Schattenzustand.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29])
 class SoundKitTest {
 
     private val context: Context = RuntimeEnvironment.getApplication()
+
+    private val audio: AudioManager get() = requireNotNull(SoundKit.audioForTest())
 
     private fun systemSoundEffects(on: Boolean) {
         Settings.System.putInt(
@@ -39,11 +56,26 @@ class SoundKitTest {
         )
     }
 
+    private fun playedTick(): Boolean {
+        val pool = SoundKit.poolForTest() ?: return false
+        return Shadow.extract<ShadowSoundPool>(pool).wasResourcePlayed(R.raw.click_tick)
+    }
+
+    private fun tickPlaybacks(): Int {
+        val pool = SoundKit.poolForTest() ?: return 0
+        return Shadow.extract<ShadowSoundPool>(pool).getResourcePlaybacks(R.raw.click_tick).size
+    }
+
     @Before
     fun setUp() {
+        // SoundKit ist ein Objekt: ohne Zuruecksetzen traegt es Sperrzeiten
+        // und geladene Puffer aus einem vorherigen Test in diesen hinein.
+        SoundKit.release()
         SoundKit.init(context, enabled = true)
-        systemSoundEffects(true)
-        SoundKit.refreshSystemSetting(context)
+        audio.ringerMode = AudioManager.RINGER_MODE_NORMAL
+        // Fester Wert satt Maximum: die Vorgabe des Schattens ist 0, und
+        // damit waere "kein Ton" aus dem falschen Grund richtig gewesen.
+        audio.setStreamVolume(AudioManager.STREAM_SYSTEM, 7, 0)
     }
 
     @After
@@ -54,25 +86,78 @@ class SoundKitTest {
     }
 
     @Test
-    fun `systemeinstellung schaltet die klicks ab und wieder an`() {
-        assertTrue("Klicks sollten an sein", SoundKit.enabled)
+    fun `klick erreicht das audiosystem`() {
+        assertNotNull("SoundPool muss aufgebaut sein", SoundKit.poolForTest())
 
-        systemSoundEffects(false)
-        SoundKit.refreshSystemSetting(context)
-        assertFalse("Systemeinstellung aus muss die Klicks abschalten", SoundKit.enabled)
+        SoundKit.play(SoundKit.Click.TICK)
 
-        systemSoundEffects(true)
-        SoundKit.refreshSystemSetting(context)
-        assertTrue("Systemeinstellung an muss die Klicks wieder freigeben", SoundKit.enabled)
+        assertTrue("Der Klick muss an SoundPool.play gehen", playedTick())
     }
 
     @Test
-    fun `abgeschalteter app schalter bleibt aus auch wenn das system klingelt`() {
+    fun `systemeinstellung beruehrungsklaenge schaltet die app nicht mehr ab`() {
+        // Genau der zweite Fehler: diese Einstellung ist auf vielen
+        // Geraeten ab Werk aus, und die App schwieg dazu ohne Grund.
+        systemSoundEffects(false)
+
+        SoundKit.play(SoundKit.Click.TICK)
+
+        assertTrue("Die Systemeinstellung darf den App-Klick nicht schlucken", playedTick())
+    }
+
+    @Test
+    fun `lautloser modus unterdrueckt den klick`() {
+        audio.ringerMode = AudioManager.RINGER_MODE_SILENT
+
+        SoundKit.play(SoundKit.Click.TICK)
+
+        assertFalse("Im Lautlos-Modus darf nicht geklickt werden", playedTick())
+    }
+
+    @Test
+    fun `vibration unterdrueckt den klick`() {
+        audio.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+
+        SoundKit.play(SoundKit.Click.TICK)
+
+        assertFalse("Auf Vibration darf nicht geklickt werden", playedTick())
+    }
+
+    @Test
+    fun `systemlautstaerke null unterdrueckt den klick`() {
+        audio.setStreamVolume(AudioManager.STREAM_SYSTEM, 0, 0)
+
+        SoundKit.play(SoundKit.Click.TICK)
+
+        assertFalse("Ohne Systemlautstaerke kein Ton", playedTick())
+    }
+
+    @Test
+    fun `abgeschalteter app schalter unterdrueckt den klick`() {
         SoundKit.setEnabled(false)
-        assertFalse(SoundKit.enabled)
+
+        SoundKit.play(SoundKit.Click.TICK)
+
+        assertFalse("App-Schalter aus muss den Ton abschalten", playedTick())
 
         SoundKit.setEnabled(true)
-        assertTrue(SoundKit.enabled)
+        SoundKit.play(SoundKit.Click.TICK)
+        assertTrue("App-Schalter an muss den Ton wieder freigeben", playedTick())
+    }
+
+    @Test
+    fun `zu schnelle wiederholung desselben klicks wird verschluckt`() {
+        SoundKit.play(SoundKit.Click.TICK)
+        val afterFirst = tickPlaybacks()
+        assertEquals("Der erste Klick muss spielen", 1, afterFirst)
+
+        SoundKit.play(SoundKit.Click.TICK)
+
+        assertEquals(
+            "Der zweite Klick im Mindestabstand darf nicht spielen",
+            afterFirst,
+            tickPlaybacks()
+        )
     }
 
     @Test

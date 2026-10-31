@@ -4,6 +4,39 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.4.1] – 2026-10-31
+
+### Behoben
+
+- **Die Klickgeräusche waren nie zu hören — auch nicht beim ersten Mal.**
+  Die Sperre gegen zu schnelle Wiederholungen verglich den Zeitstempel
+  gegen `Long.MIN_VALUE`; `jetzt - Long.MIN_VALUE` läuft im `Long`-Bereich
+  über und wird negativ, die Bedingung war also immer wahr. Weil der
+  Zeitstempel erst *nach* der Prüfung gesetzt wurde, blieb es nicht beim
+  ersten Klick: jeder einzelne wurde verschluckt. Die Prüfung läuft jetzt
+  über den gespeicherten Wert (`lastPlayedAt[click]?.let { … }`).
+- **Zweite Ursache derselben Stille: die App hing an der
+  Systemeinstellung „Berührungsklänge".** Die ist auf vielen Geräten ab
+  Werk aus; der Schalter in der App stand sichtbar auf an und niemand
+  konnte sehen, warum kein Ton kam. Der Schalter in der App entscheidet
+  jetzt allein, dazu kommen der Lautlos-/Vibrationsmodus und
+  Systemlautstärke 0 — die Regeln stehen als reine Funktion in
+  `SoundPolicy` und sind ohne Gerät geprüft.
+- Lautstärkefaktor von 0,55 auf 1,0: die Klickdateien sind bereits auf
+  −1 dBFS normalisiert, die Reduktion war nur leiser ohne Zweck.
+- Der erste Tipp nach einem Kaltstart ging verloren, wenn die Klickdatei
+  noch dekodiert wurde; er wird jetzt vorgemerkt und nach dem Laden
+  nachgeholt. Fehlschläge beim Dekodieren stehen im Protokoll.
+
+### Hinzugefügt
+
+- **Das Protokoll sagt, warum es still bleibt.** Beim Aufbau eine Zeile
+  mit App-Schalter, Systemton-Modus, System- und Medienlautstärke sowie
+  dem Wert der Systemeinstellung; danach genau eine Zeile je Wechsel des
+  Grundes (`Klick wird gespielt`, `Telefon ist lautlos oder auf
+  Vibration`, `Systemlautstaerke ist 0`). Vorher war „kein Ton" nicht von
+  einem Fehler zu unterscheiden.
+
 ## [1.4.0] – 2026-10-31
 
 ### Hinzugefügt

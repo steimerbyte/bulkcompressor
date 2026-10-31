@@ -226,7 +226,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         if (::buttonAccess.isInitialized) updateAccessRow()
         // Die Systemeinstellung fuer Beruehrungsklaenge kann sich
         // waehrend der Laufzeit geaendert haben.
-        SoundKit.refreshSystemSetting(this)
+        SoundKit.refresh(this)
     }
 
     // ------------------------------------------------------------------

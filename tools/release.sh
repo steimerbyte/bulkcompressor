@@ -68,6 +68,11 @@ if [ "$(git config --get core.hooksPath || true)" != ".githooks" ]; then
         " Aktivieren: git config --local core.hooksPath .githooks"
 fi
 
+# Marken vom Server holen: `gh release create` legt sie dort an, und ein
+# Klon, der nur gepusht hat, kennt sie sonst nicht. Ohne das verglich die
+# Sperre unten gegen eine veraltete Vorgaengerversion.
+git fetch --tags --quiet origin || fail "Marken liessen sich nicht holen (origin erreichbar?)"
+
 PREV_TAG=$(git tag --sort=-v:refname | sed -n '1p')
 if [ -n "$PREV_TAG" ]; then
     PREV_CODE=$(git show "$PREV_TAG:app/build.gradle.kts" 2>/dev/null |
@@ -142,11 +147,33 @@ Release $TAG
 $(sed -n "/^## \[$VERSION_NAME\]/,/^## \[/p" CHANGELOG.md | sed '$d' | tail -n +2)
 NOTES_EOF
 
+# Die Marke wird hier gesetzt, nicht von `gh` am entfernten Zweig-Kopf:
+# sonst zeigt sie auf den zuletzt gepushten Stand, und der kann aelter sein
+# als das, was hier gerade gebaut wurde. v1.9.3 stand so auf dem Commit
+# *vor* der Aenderung, die das Release beschreibt.
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+step "Zweig $BRANCH pushen"
+git push --quiet origin "HEAD:$BRANCH" || fail "Zweig liess sich nicht pushen"
+
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+    [ "$(git rev-parse "$TAG^{commit}")" = "$(git rev-parse HEAD)" ] ||
+        fail "Marke $TAG existiert bereits und zeigt nicht auf HEAD."
+else
+    git tag -a "$TAG" -m "$TAG" || fail "Marke liess sich nicht setzen"
+fi
+
+# Der Push der Marke laeuft durch .githooks/pre-push - die Suite also ein
+# zweites Mal, mit genau demselben Zaehler. Das kostet eine halbe Minute
+# und ist der Punkt des Hakens: kein Umweg, auch nicht fuer dieses Skript.
+step "Marke $TAG pushen (pre-push prueft die Suite erneut)"
+git push --quiet origin "refs/tags/$TAG" || fail "Marke liess sich nicht pushen"
+
 step "gh release create $TAG"
+# --verify-tag: die Marke existiert schon und zeigt auf den gebauten Stand.
 gh release create "$TAG" "$APK" \
     --title "$TAG" \
     --notes-file "$NOTES" \
-    --target "$(git rev-parse --abbrev-ref HEAD)"
+    --verify-tag
 
 step "Veroeffentlichtes Artefakt zurueckpruefen"
 CHECK=$(mktemp -d)

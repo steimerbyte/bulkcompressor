@@ -68,15 +68,20 @@ if [ "$(git config --get core.hooksPath || true)" != ".githooks" ]; then
         " Aktivieren: git config --local core.hooksPath .githooks"
 fi
 
-# Marken vom Server holen: `gh release create` legt sie dort an, und ein
-# Klon, der nur gepusht hat, kennt sie sonst nicht. Ohne das verglich die
-# Sperre unten gegen eine veraltete Vorgaengerversion.
-git fetch --tags --quiet origin || fail "Marken liessen sich nicht holen (origin erreichbar?)"
-
-PREV_TAG=$(git tag --sort=-v:refname | sed -n '1p')
+# Die Vorgaengermarke vom **Server** lesen, nicht aus der lokalen Liste:
+# `gh release create` legt Marken nur dort an. Ein lokales `fetch --tags`
+# scheitert ausserdem, sobald eine lokale Marke anders aussieht als die
+# entfernte (annotiert gegen leichtgewichtig) - das darf ein Release nicht
+# blockieren. Die Marke wird deshalb in einen eigenen Ref geholt und
+# danach wieder entfernt.
+PREV_TAG=$({ git ls-remote --tags --refs origin | sed 's#.*refs/tags/##' || true; } |
+    grep -E '^v[0-9]' | sort -V | sed -n '$p')
 if [ -n "$PREV_TAG" ]; then
-    PREV_CODE=$(git show "$PREV_TAG:app/build.gradle.kts" 2>/dev/null |
+    git fetch --quiet --no-tags origin "refs/tags/$PREV_TAG:refs/release/prev" 2>/dev/null ||
+        fail "Marke $PREV_TAG liess sich nicht holen (origin erreichbar?)"
+    PREV_CODE=$(git show "refs/release/prev:app/build.gradle.kts" 2>/dev/null |
         sed -n 's/.*versionCode = \([0-9]*\).*/\1/p') || PREV_CODE=""
+    git update-ref -d refs/release/prev
     if [ -n "$PREV_CODE" ] && [ "$VERSION_CODE" -le "$PREV_CODE" ]; then
         fail "versionCode $VERSION_CODE ist nicht groesser als $PREV_CODE aus $PREV_TAG." \
             " Ohne Erhoehung behandelt Android den Wechsel als Neuinstallation."

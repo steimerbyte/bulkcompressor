@@ -21,6 +21,9 @@ import java.util.Locale
  */
 class SafScanner(private val resolver: ContentResolver) {
 
+    /** Kind-Abrufe, die dieser Lauf fuer die Ordnererkennung ausgegeben hat. */
+    private var probes = 0
+
     data class Progress(val folders: Int, val files: Int)
 
     /**
@@ -59,6 +62,8 @@ class SafScanner(private val resolver: ContentResolver) {
         var entriesWithoutMime = 0
         var unreadableFolders = 0
         var foldersOverLimit = 0
+        var probedFolders = 0
+        probes = 0
         var truncated = false
         var cancelledRun = false
         var sinceProgress = 0
@@ -85,7 +90,9 @@ class SafScanner(private val resolver: ContentResolver) {
 
             val children = queryChildren(treeUri, folderId) { unreadableFolders++ }
             for (child in children) {
-                if (child.isDirectory) {
+                val directory = child.isDirectory ||
+                    isUnmarkedDirectory(treeUri, child).also { if (it) probedFolders++ }
+                if (directory) {
                     folderNames[child.documentId] = child.name
                     if (queue.size + visited.size < MAX_FOLDERS) {
                         queue.add(child.documentId)
@@ -168,6 +175,7 @@ class SafScanner(private val resolver: ContentResolver) {
                 " $skippedZeroBytes ohne Groessenangabe (trotzdem gelistet)," +
                 " $entriesWithoutMime ohne MIME)" +
                 " · $unreadableFolders Ordner nicht lesbar" +
+                (if (probedFolders > 0) " · $probedFolders Ordner ohne Verzeichnis-Typ am Kind-Abruf erkannt" else "") +
                 " · $foldersOverLimit Unterordner wegen der Ordnergrenze nicht gelesen" +
                 " · $elapsed ms Laufzeit" +
                 truncNote +
@@ -203,6 +211,58 @@ class SafScanner(private val resolver: ContentResolver) {
         val lastModified: Long,
         val isDirectory: Boolean
     )
+
+    /**
+     * Ordner, die der Anbieter nicht als Ordner kennzeichnet.
+     *
+     * Die Welt ist nicht nur der AOSP-Speicheranbieter: manche Dateimanager
+     * melden Ordner als `inode/directory`, `resource/folder` oder ohne
+     * jeden Typ. Wurde so ein Eintrag als Datei behandelt, fiel er durch die
+     * Endungspruefung, galt als "ohne Medien-Typ" - und der Scan blieb auf
+     * der obersten Ebene stehen, obwohl der Baum tiefer reicht.
+     *
+     * Entscheidend ist deshalb der Kind-Abruf: liefert der Anbieter fuer
+     * diese Dokument-ID Eintraege, ist es ein Ordner. Das kostet eine
+     * Abfrage - aber nur fuer Eintraege, die weder einen echten Typ noch
+     * eine Groesse haben, also weder als Datei noch als Ordner erkennbar
+     * sind. Danach greift eine Ersatzregel, damit ein Anbieter, der auf
+     * jeden Abruf antwortet, den Lauf nicht ausbremst.
+     */
+    private fun isUnmarkedDirectory(treeUri: Uri, child: Child): Boolean {
+        // Ein Typ, der weder Verzeichnis noch "unbekannt" ist, spricht fuer
+        // eine Datei; eine gemeldete Groesse ebenfalls.
+        if (child.size > 0) return false
+        val unknown = child.mime.isBlank() ||
+            child.mime == UNKNOWN_MIME ||
+            child.mime == BINARY_MIME
+        if (!unknown) return false
+        if (probes >= MAX_PROBES) {
+            // Notbremse: Ordnernamen tragen in der Regel keine Endung.
+            return Naming.extensionOf(child.name).isEmpty()
+        }
+        probes++
+        return hasChildren(treeUri, child.documentId)
+    }
+
+    /** Fragt einen Kind-Cursor ab, ohne Fehler zu protokollieren. */
+    private fun hasChildren(treeUri: Uri, documentId: String): Boolean {
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, documentId)
+        var cursor: Cursor? = null
+        return try {
+            cursor = resolver.query(
+                childrenUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                null,
+                null,
+                null
+            )
+            cursor != null && cursor.count > 0
+        } catch (t: Throwable) {
+            false
+        } finally {
+            cursor?.close()
+        }
+    }
 
     private fun queryChildren(
         treeUri: Uri,
@@ -256,7 +316,7 @@ class SafScanner(private val resolver: ContentResolver) {
                         lastModified = if (modifiedIndex >= 0 && !cursor.isNull(modifiedIndex)) {
                             cursor.getLong(modifiedIndex)
                         } else 0L,
-                        isDirectory = mime == DocumentsContract.Document.MIME_TYPE_DIR
+                        isDirectory = isDirectoryMime(mime)
                     )
                 )
             }
@@ -288,7 +348,41 @@ class SafScanner(private val resolver: ContentResolver) {
         const val MAX_FILES = 20_000
         const val MAX_FOLDERS = 2_000
 
+        /**
+         * MIME-Typen, mit denen Anbieter einen Ordner melden. Der
+         * AOSP-Speicheranbieter nimmt `vnd.android.document/directory`;
+         * fremde Anbieter (Dateimanager, Cloud) nehmen eigene Typen, und
+         * ohne diese Liste fiel der Unterordner stillschweigend weg.
+         */
+        private val DIRECTORY_MIMES = setOf(
+            DocumentsContract.Document.MIME_TYPE_DIR,
+            "inode/directory",
+            "resource/folder",
+            "application/vnd.google-apps.folder",
+            "application/x-directory",
+            "text/directory"
+        )
+
+        internal fun isDirectoryMime(mime: String): Boolean {
+            if (mime.isBlank()) return false
+            return mime in DIRECTORY_MIMES ||
+                mime.endsWith("/directory") ||
+                mime.endsWith("/folder") ||
+                mime.startsWith("application/vnd.google-apps.folder")
+        }
+
         /** So viele Dateien zwischen zwei Fortschrittsmeldungen. */
         private const val PROGRESS_EVERY = 64
+
+        /**
+         * So oft darf ein Scan einen Ordner per Kind-Abruf pruefen. Danach
+         * entscheidet die Ersatzregel - ein Anbieter, der auf jede Anfrage
+         * mit einem leeren Cursor antwortet, wuerde den Lauf sonst mit einer
+         * Abfrage je Datei verlangsamen.
+         */
+        private const val MAX_PROBES = 2_000
+
+        private const val UNKNOWN_MIME = "application/unknown"
+        private const val BINARY_MIME = "application/octet-stream"
     }
 }

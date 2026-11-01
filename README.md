@@ -405,8 +405,15 @@ Auf einem echten Gerät wurde diese Fassung noch nicht ausgeführt — siehe
   48 MP groß, nur mit weniger Byte pro Pixel.
 * **Die Speicherbremse ist auf einem Gerät nicht erprobt.** Schwellen
   (72 %/85 %), Systemmeldungen und die Wartezeiten sind ohne Hardware
-  geprüft (reine Einordnung, Journal, Rückfallebene — 78 JVM-Tests), das
+  geprüft (reine Einordnung, Journal, Rückfallebene — 150 JVM-Tests), das
   Zusammenspiel mit echten Encodern nicht.
+* **Ordner ohne Verzeichnis-Typ** erkennt der Scan am Kind-Abruf (ein
+  Anbieter, der Ordner als `inode/directory`, `resource/folder` oder ganz
+  ohne Typ meldet, wird damit trotzdem rekursiv gelesen). Verweigert ein
+  Anbieter den Kind-Abruf für Unterordner grundsätzlich — der
+  Downloads-Anbieter von Android tut das in manchen Versionen —, bleibt
+  es bei der obersten Ebene; die Zusammenfassung nennt dann die nicht
+  lesbaren Ordner.
 * **EXIF-Kopieren deckt die üblichen Felder ab**, keine vollständige
   Kopie: die Android-Bibliothek kann vorhandene Felder nicht
   aufzählen. Vorschaubilder im EXIF werden nicht neu erzeugt.

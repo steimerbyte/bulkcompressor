@@ -23,8 +23,8 @@ android {
         // braucht nicht mehr als MediaCodec + MediaMuxer (API 18+).
         minSdk = 24
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.7.1"
+        versionCode = 14
+        versionName = "1.7.2"
     }
 
     signingConfigs {

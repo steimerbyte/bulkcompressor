@@ -4,6 +4,20 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.7.2] – 2026-11-01
+
+### Behoben
+
+- **Der Ordner-Scan blieb auf der obersten Ebene stehen, wenn der
+  Anbieter seine Ordner nicht als `vnd.android.document/directory`
+  meldet.** Manche Dateimanager und Cloud-Anbieter nehmen
+  `inode/directory`, `resource/folder` oder gar keinen Typ; solche
+  Einträge galten als Datei ohne Medien-Typ und wurden verworfen —
+  Unterordner wurden nie betreten. Jetzt entscheidet zusätzlich eine
+  Liste bekannter Verzeichnis-Typen und, bei Einträgen ohne Typ und ohne
+  Größe, ein Kind-Abruf: liefert der Anbieter dafür Einträge, ist es ein
+  Ordner. Das Protokoll nennt die so erkannten Ordner.
+
 ## [1.7.1] – 2026-11-01
 
 ### Behoben

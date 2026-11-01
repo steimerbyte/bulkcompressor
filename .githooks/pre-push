@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+#
+# pre-push: ein Git-Release (Push einer Marke) nur mit gruener Testsuite.
+#
+# Git uebergibt je Referenz eine Zeile auf stdin:
+#
+#   <lokale-ref> <lokaler-sha> <remote-ref> <remote-sha>
+#
+# Geprueft wird nur, wenn eine Marke (`refs/tags/…`) dabei ist. Ein normaler
+# Branch-Push bleibt so schnell wie bisher - die Suite bei jedem
+# Zwischenstand laufen zu lassen, erzieht dazu, sie abzuschalten.
+#
+# Aktivieren (einmal je Klon):
+#
+#   git config --local core.hooksPath .githooks
+#
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+TAG_PUSH=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ -n "${local_ref:-}" ] || continue
+    case "$local_ref" in
+        refs/tags/*) TAG_PUSH=1 ;;
+    esac
+done
+
+if [ "$TAG_PUSH" -eq 0 ]; then
+    exit 0
+fi
+
+echo "==> Marke wird gepusht: volle Testsuite vor dem Release"
+export JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}
+export ANDROID_HOME=${ANDROID_HOME:-$HOME/android-sdk}
+
+RESULTS=app/build/test-results/testDebugUnitTest
+rm -rf "$RESULTS"
+
+if ! ./gradlew :app:testDebugUnitTest --offline --rerun-tasks; then
+    cat >&2 <<'EOF'
+
+FEHLER: Testsuite ist gescheitert - die Marke wird nicht gepusht.
+        Erst reparieren, dann erneut pushen.
+EOF
+    exit 1
+fi
+
+read -r TESTS FAILURES ERRORS < <(
+    awk -F'"' '/<testsuite / {
+        for (i = 1; i < NF; i++) {
+            if ($i ~ /tests=$/) t += $(i + 1)
+            if ($i ~ /failures=$/) f += $(i + 1)
+            if ($i ~ /errors=$/) e += $(i + 1)
+        }
+    } END { print t + 0, f + 0, e + 0 }' "$RESULTS"/*.xml
+)
+
+if [ "${TESTS:-0}" -eq 0 ] || [ "${FAILURES:-1}" -ne 0 ] || [ "${ERRORS:-1}" -ne 0 ]; then
+    echo "FEHLER: Suite meldet $TESTS Tests, $FAILURES Fehlschläge, $ERRORS Fehler - kein Release." >&2
+    exit 1
+fi
+
+echo "==> Suite gruen: $TESTS Tests, 0 Fehler"
+exit 0

@@ -545,6 +545,21 @@ Unabhängig vom Skript hängt auch `assembleRelease` in
 `app/build.gradle.kts` an der Testsuite — ein von Hand getippter Bau kann
 den Schritt also nicht vergessen.
 
+Und weil ein Release auch ohne dieses Skript entstehen kann (Marke von
+Hand setzen und pushen), greift der `pre-push`-Haken in `.githooks/`:
+Sobald `refs/tags/…` gepusht wird, läuft die volle Suite, und bei Rot
+verweigert Git den Push. Ein normaler Branch-Push bleibt unberührt —
+sonst schaltet man den Haken beim ersten Zwischenstand ab. Einmal je Klon
+aktivieren:
+
+```bash
+git config --local core.hooksPath .githooks
+```
+
+Belegt: mit absichtlich rotem Test endet der Marken-Push mit Exit 1
+(„Testsuite ist gescheitert — die Marke wird nicht gepusht"), mit grüner
+Suite mit Exit 0 („Suite grün: 287 Tests").
+
 ## Grenzen (ehrlich)
 
 * **Ohne Gerät gebaut.** Encoder-/Decoderpfade (MediaCodec) lassen sich

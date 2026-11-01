@@ -63,6 +63,11 @@ step "Release $TAG (versionCode $VERSION_CODE)"
 
 $(git status --short)"
 
+if [ "$(git config --get core.hooksPath || true)" != ".githooks" ]; then
+    echo "Hinweis: der pre-push-Haken ist nicht aktiv." \
+        " Aktivieren: git config --local core.hooksPath .githooks"
+fi
+
 PREV_TAG=$(git tag --sort=-v:refname | sed -n '1p')
 if [ -n "$PREV_TAG" ]; then
     PREV_CODE=$(git show "$PREV_TAG:app/build.gradle.kts" 2>/dev/null |

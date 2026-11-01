@@ -52,7 +52,10 @@ nach [SemVer](https://semver.org/lang/de/).
   `apksigner`, und die veröffentlichte Datei wird zurückgelesen.
   Zusätzlich hängt `assembleRelease` in `app/build.gradle.kts` an
   `testDebugUnitTest`, damit auch ein manueller Bau den Schritt nicht
-  überspringen kann.
+  überspringen kann, und `.githooks/pre-push` prüft jeden Push einer
+  Marke: bei roter Suite verweigert Git den Push. Ein Branch-Push bleibt
+  unberührt, damit der Haken nicht beim ersten Zwischenstand abgeschaltet
+  wird.
 - Gekürzt wird im Skript mit `sed -n`, nicht mit `head`: `aapt2 dump
   badging` schreibt 118 Zeilen, `head -1` schließt die Pipe, und mit
   `set -o pipefail` bricht das Skript dann an SIGPIPE ab (Exit 141) —

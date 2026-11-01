@@ -4,6 +4,22 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.7.5] – 2026-11-01
+
+### Geändert
+
+- **Der Regler hat eine durchgehende Schiene.** 1.7.4 hatte die
+  Punktreihe statt eines Balkens gezeichnet; im Bild gelesen war das eine
+  Skala, kein Regler: vierzehn einzelne Punkte über die ganze Breite
+  zeigen keine Strecke von Anschlag zu Anschlag, und wo die Spanne endet,
+  war nicht erkennbar. Jetzt trägt eine 1,5 dp hohe Linie die Spanne,
+  darauf liegen die vierzehn Punkte als Skala (gefüllte weiß), und der
+  Griff ist ein runder Knopf mit Ring statt eines Balkens. Drei Merkmale
+  für denselben Wert, und keines davon nimmt der Form ihre Erkennbarkeit.
+  Vor dem Commit gerendert und am Pixel geprüft: Knopf bleibt ganz
+  innerhalb der Reglerzeile (18 dp in 40 dp), die Prozentzahl in der Zeile
+  darüber hat 13 dp Abstand und wird nicht überlagert.
+
 ## [1.7.4] – 2026-11-01
 
 ### Neu

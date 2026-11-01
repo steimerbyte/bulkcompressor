@@ -95,14 +95,20 @@ Vier Regeln, die im Layout stecken:
   nicht reagiert, ist eine Falle. Für „Neu scannen" gilt dasselbe: er hat
   eine feste Textfarbe, ein gesperrter Knopf bekäme sonst dieselbe
   Deckkraft wie ein benutzbarer.
-- **Der Regler ist eine Punktreihe, kein Systembalken.** Vierzehn Punkte,
-  gefüllt bis zum Wert, dazu ein senkrechter Griff auf demselben Bruchteil
-  (`NothingSlider`). Der Griff ist zugleich die Antwort auf „wo steht der
-  Wert" — die Punkte muss man nicht zählen. Gezeichnet wird im Regler
-  selbst, nicht über Tints: die Punktreihe liegt in derselben Spanne wie
-  die Tippfläche (die Punkte sind um eine Punktbreite eingerückt, sonst
-  wäre der erste Punkt angeschnitten), also setzt ein Tipp den Griff
-  genau dorthin, wo der Finger war.
+- **Der Regler ist eine Schiene mit Punktskala, kein Systembalken.**
+  Eine 1,5 dp hohe Linie trägt die Spanne von Anschlag zu Anschlag, darauf
+  liegen vierzehn Punkte (gefüllt bis zum Wert) und ein runder Knopf auf
+  demselben Bruchteil (`NothingSlider`). Warum nicht nur Punkte: eine
+  Reihe einzelner Punkte ist eine Skala, kein Regler — man sieht nicht,
+  dass sie von einem Ende zum anderen reicht, und eine Länge liest man
+  daran nicht ab. Die Schiene zeigt die Strecke, die Punkte den Wert, der
+  Knopf die Stellung; drei Merkmale, keines verdrängt die Form.
+  Gezeichnet wird im Regler selbst, nicht über Tints: Schiene und Punkte
+  liegen in derselben Spanne wie die Tippfläche (um einen Knopfradius
+  eingerückt, sonst würde der Knopf bei 0 % und 100 % am Kartenrand
+  beschnitten), also setzt ein Tipp den Knopf genau dorthin, wo der
+  Finger war. Der Knopf bleibt mit 18 dp ganz innerhalb der Reglerzeile —
+  die Prozentzahl steht in der Zeile darüber und wird nicht überlagert.
 - **Animation, die man abschalten kann.** Die Punktmatrix beim Scannen
   zeichnet im Ruhezustand gar nichts und behält nur ihren Platz, damit
   nichts springt. Ist im System „Animationen entfernen" gewählt, steht das

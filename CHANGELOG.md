@@ -4,6 +4,29 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.9.3] – 2026-11-01
+
+### Behoben
+
+- **Der Leser verschwieg, warum er scheiterte.** Auf einem Gerät stand im
+  Protokoll für rund 500 Dateien dieselbe Zeile: „Anbieter lieferte keinen
+  Lesestrom". Das war keine Beobachtung, sondern eine Vermutung: der Leser
+  fing jede Ausnahme ab und machte `null` daraus, und `null` wurde als
+  „Anbieter liefert nichts" gedeutet. Ein abgelaufener Ordner-Zugriff
+  (`SecurityException`) sah damit genauso aus wie eine gelöschte Datei
+  (`FileNotFoundException`) — und der einzige Weg zur Wahrheit war ein
+  Kabel und `adb logcat`.
+  - `openInputStream` wirft jetzt durch, bis es gefangen wird: jeder
+    Fehlschlag trägt Klassennamen und Meldung, z. B. „Kopf nicht lesbar:
+    SecurityException: Permission Denial: …".
+  - Ein Grund wird **einmal** protokolliert, nicht einmal je Datei. 500
+    gleiche Zeilen haben die Ursache verdeckt; der Scan schreibt ohnehin
+    eine Zusammenfassung.
+  - Der Grund steht zusätzlich in der Zusammenfassung auf dem Bildschirm,
+    direkt neben der Zahl der betroffenen Dateien: was der Nutzer
+    entscheiden muss (Ordner neu wählen oder nicht), entscheidet sich an
+    der Ursache, nicht an der Anzahl.
+
 ## [1.9.2] – 2026-11-01
 
 ### Behoben

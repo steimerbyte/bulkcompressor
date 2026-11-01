@@ -55,6 +55,9 @@ class TagStoreProbeTest {
         /** Dokumente, deren Strom gar nicht erst geoeffnet werden kann. */
         val kaputt = mutableSetOf<String>()
 
+        /** Dokumente, fuer die der Anbieter den Zugriff verweigert. */
+        val verboten = mutableSetOf<String>()
+
         /** Abweichende Groesse in der Abfrage; -1 = die echte. */
         val groessen = mutableMapOf<String, Long>()
 
@@ -103,6 +106,9 @@ class TagStoreProbeTest {
          */
         override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor? {
             val id = uri.lastPathSegment ?: throw FileNotFoundException("kein Dokument")
+            if (id in verboten) {
+                throw SecurityException("Permission Denial: opening provider for $id")
+            }
             if (id in kaputt) throw FileNotFoundException("Dokument nicht lesbar: $id")
             val bytes = inhalte[id] ?: throw FileNotFoundException(id)
             // Bewusst ohne eigenen Schreiber-Thread: die Nutzdaten sind
@@ -217,6 +223,46 @@ class TagStoreProbeTest {
 
         assertEquals(MarkerState.UNREADABLE, reading.state)
         assertTrue("Ein unbekannter Zustand braucht einen Grund", reading.reason.isNotEmpty())
+    }
+
+    @Test
+    fun `verweigerter zugriff nennt die ausnahme, nicht eine vermutung`() {
+        // Der Fall aus dem Geraeteprotokoll: 500 Dateien, jede mit
+        // "Anbieter lieferte keinen Lesestrom". Die Zeile war falsch -
+        // `openInputStream` hatte geworfen, und der Grund wurde
+        // verschluckt. Ohne die Ausnahme in der Meldung ist ein
+        // abgelaufener Ordner-Zugriff nicht von einer fehlenden Datei zu
+        // unterscheiden.
+        val anbieter = provider()
+        val uri = document(anbieter, "gesperrt.jpg", ByteArray(0))
+        anbieter.verboten += "gesperrt.jpg"
+
+        val reading = store().probe(uri)
+
+        assertEquals(MarkerState.UNREADABLE, reading.state)
+        assertTrue(
+            "Grund muss die Ausnahme nennen, war: ${reading.reason}",
+            reading.reason.contains("SecurityException")
+        )
+        assertTrue(
+            "Grund muss den Verweigerungstext enthalten, war: ${reading.reason}",
+            reading.reason.contains("Permission Denial")
+        )
+    }
+
+    @Test
+    fun `fehlende datei nennt die ausnahmeklasse`() {
+        val anbieter = provider()
+        val uri = document(anbieter, "weg.jpg", ByteArray(0))
+        anbieter.kaputt += "weg.jpg"
+
+        val reading = store().probe(uri)
+
+        assertEquals(MarkerState.UNREADABLE, reading.state)
+        assertTrue(
+            "Grund muss FileNotFoundException nennen, war: ${reading.reason}",
+            reading.reason.contains("FileNotFoundException")
+        )
     }
 
     @Test

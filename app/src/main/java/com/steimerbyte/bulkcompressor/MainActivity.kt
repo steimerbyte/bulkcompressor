@@ -888,7 +888,12 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             // Ohne diese Zahl saehe die Liste vollstaendig aus, waehrend der
             // Filter fuer diesen Anbieter gar nicht greift.
             val markerNote = if (result.markersUnreadable > 0) {
-                getString(R.string.scan_markers_unreadable, result.markersUnreadable)
+                getString(R.string.scan_markers_unreadable, result.markersUnreadable) +
+                    if (result.markerReason.isNotBlank()) {
+                        getString(R.string.scan_marker_reason, result.markerReason)
+                    } else {
+                        ""
+                    }
             } else {
                 ""
             }

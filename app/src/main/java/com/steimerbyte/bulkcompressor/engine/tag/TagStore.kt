@@ -7,6 +7,7 @@ import androidx.exifinterface.media.ExifInterface
 import com.steimerbyte.bulkcompressor.engine.DescriptorIo
 import com.steimerbyte.bulkcompressor.engine.readAtMost
 import com.steimerbyte.bulkcompressor.log.Log
+import java.io.FileNotFoundException
 import java.io.InputStream
 
 /**
@@ -50,6 +51,10 @@ import java.io.InputStream
  */
 class TagStore(private val resolver: ContentResolver) : MarkerProbe {
 
+    /** Schon protokollierte Gruende - jeder erscheint einmal. */
+    private val seenReasons = HashSet<String>()
+
+
     /**
      * Ordnet ein Dokument ein.
      *
@@ -59,7 +64,6 @@ class TagStore(private val resolver: ContentResolver) : MarkerProbe {
     override fun probe(uri: Uri): MarkerReading {
         val head = try {
             readHead(uri, HEAD_BYTES)
-                ?: return unreadable(uri, "Anbieter lieferte keinen Lesestrom")
         } catch (t: Throwable) {
             return unreadable(uri, "Kopf nicht lesbar: ${oneLine(t)}")
         }
@@ -111,9 +115,9 @@ class TagStore(private val resolver: ContentResolver) : MarkerProbe {
 
     private fun probeExif(uri: Uri): MarkerReading {
         val raw = try {
-            readStream(uri)?.use { input ->
+            openStream(uri).use { input ->
                 ExifInterface(input).getAttribute(ExifInterface.TAG_USER_COMMENT)
-            } ?: return unreadable(uri, "Anbieter lieferte keinen Lesestrom")
+            }
         } catch (t: Throwable) {
             return unreadable(uri, "EXIF nicht lesbar: ${oneLine(t)}")
         }
@@ -122,8 +126,8 @@ class TagStore(private val resolver: ContentResolver) : MarkerProbe {
     }
 
     /** Kurzer Kopf fuer die Formaterkennung; nur so viel wie noetig. */
-    private fun readHead(uri: Uri, count: Int): ByteArray? =
-        readStream(uri)?.use { input -> input.readAtMost(count) }
+    private fun readHead(uri: Uri, count: Int): ByteArray =
+        openStream(uri).use { input -> input.readAtMost(count) }
 
     /**
      * Die letzten [count] Bytes. Zuerst ueber den Deskriptor (billig, wenn
@@ -148,7 +152,7 @@ class TagStore(private val resolver: ContentResolver) : MarkerProbe {
         if (size <= 0L) return null
         val wanted = minOf(count.toLong(), size).toInt()
         val skip = size - wanted
-        readStream(uri)?.use { input ->
+        openStream(uri).use { input ->
             skipFully(input, skip)
             val tail = ByteArray(wanted)
             var read = 0
@@ -162,7 +166,6 @@ class TagStore(private val resolver: ContentResolver) : MarkerProbe {
             // und der Befund waere faelschlich "nicht komprimiert".
             return if (read == wanted) tail else null
         }
-        return null
     }
 
     /**
@@ -193,7 +196,21 @@ class TagStore(private val resolver: ContentResolver) : MarkerProbe {
         }
     }.getOrNull()
 
-    private fun readStream(uri: Uri): InputStream? = runCatching { resolver.openInputStream(uri) }.getOrNull()
+    /**
+     * Der Lesestrom zu einem Dokument - **werfend**.
+     *
+     * Vorher stand hier `runCatching { … }.getOrNull()`, und der Grund ging
+     * verloren: ein `SecurityException` (abgelaufene Ordner-Freigabe) sah
+     * genauso aus wie ein `FileNotFoundException` (Datei weg) und wie ein
+     * Anbieter, der wirklich nichts liefert. Im Protokoll des Geraets
+     * stand dann fuer 500 Dateien dieselbe Vermutung ("Anbieter lieferte
+     * keinen Lesestrom") und keine Ursache. Der Grund muss bis in die
+     * Statuszeile durchkommen - er ist die einzige Information, mit der
+     * der Nutzer etwas anfangen kann.
+     */
+    private fun openStream(uri: Uri): InputStream =
+        resolver.openInputStream(uri)
+            ?: throw FileNotFoundException("Anbieter lieferte keinen Lesestrom")
 
     /**
      * Traegt der `ftyp`-Kopf ein Standbild-Kennzeichen? Dann ist die Datei
@@ -208,7 +225,14 @@ class TagStore(private val resolver: ContentResolver) : MarkerProbe {
 
     private fun unreadable(uri: Uri, reason: String): MarkerReading {
         val line = oneLine(reason)
-        Log.w("Tag", "Marker unabhaengig lesbar? Nein · $uri · $line")
+        // Einmal je Grund, nicht einmal je Datei. Bei 500 Fotos mit
+        // derselben Ursache war das Protokoll 500 Zeilen lang und die
+        // Ursache darin nicht zu finden; der Scan schreibt ohnehin eine
+        // Zusammenfassung. Neue Gruende erscheinen weiterhin sofort.
+        val isNew = synchronized(seenReasons) { seenReasons.add(line) }
+        if (isNew) {
+            Log.w("Tag", "Marker nicht lesbar · $uri · $line")
+        }
         return MarkerReading(MarkerState.UNREADABLE, reason = line)
     }
 
@@ -217,7 +241,18 @@ class TagStore(private val resolver: ContentResolver) : MarkerProbe {
      * Statusanzeige des Scans; ein Umbruch aus einer Fremdmeldung wuerde
      * das Layout sprengen.
      */
-    private fun oneLine(t: Throwable): String = oneLine(t.message ?: t.javaClass.simpleName)
+    /**
+     * Eine Zeile fuer ein geworfenes Problem - **mit Klasse**. Nur die
+     * Meldung zu nehmen reicht nicht: `SecurityException` und
+     * `FileNotFoundException` sind fuer den Nutzer verschiedene Lagen
+     * (Freigabe erneuern / Datei ist weg), und manche Anbieter werfen
+     * ohne Meldung, dann blieb bisher nur der Klassenname uebrig.
+     */
+    private fun oneLine(t: Throwable): String {
+        val message = t.message?.takeIf { it.isNotBlank() }
+        val text = if (message == null) t.javaClass.simpleName else "${t.javaClass.simpleName}: $message"
+        return oneLine(text)
+    }
 
     private fun oneLine(text: String): String {
         val flat = text.replace(Regex("\\s+"), " ").trim()

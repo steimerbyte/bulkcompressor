@@ -94,6 +94,7 @@ class SafScanner(
                 skippedTagged = 0,
                 unreadableFolders = 0,
                 markersUnreadable = 0,
+                markerReason = "",
                 videoCount = 0,
                 imageCount = 0
             )
@@ -509,6 +510,7 @@ class SafScanner(
             skippedTagged = skippedTagged,
             unreadableFolders = unreadableFolders,
             markersUnreadable = markersUnreadable,
+            markerReason = firstUnreadableReason,
             videoCount = videos,
             imageCount = items.size - videos
         )

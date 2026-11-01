@@ -27,6 +27,7 @@
     <string name="scan_unreadable"> · %1$d Ordner nicht lesbar</string>
     <string name="scan_tagged"> · %1$d bereits komprimiert</string>
     <string name="scan_markers_unreadable"> · %1$d Marker nicht lesbar</string>
+    <string name="scan_marker_reason"> (%1$s)</string>
     <string name="scan_failed">Ordner konnte nicht gelesen werden. Einzelheiten im Terminal.</string>
 
     <string name="label_video">VIDEO</string>

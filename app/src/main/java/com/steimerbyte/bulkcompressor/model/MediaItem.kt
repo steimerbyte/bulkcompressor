@@ -56,6 +56,15 @@ data class ScanResult(
      * auszusehen.
      */
     val markersUnreadable: Int = 0,
+    /**
+     * Der Grund, warum die Marker nicht lesbar waren - einmal, nicht je
+     * Datei. Bei 500 Fotos mit derselben Ursache stand auf dem Geraet nur
+     * "500 Marker nicht lesbar" und im Protokoll 500 identische Zeilen
+     * ohne Ursache; der Nutzer musste ein Kabel anschliessen, um zu
+     * erfahren, was los ist. Ursache und Zahl gehoeren zusammen auf den
+     * Bildschirm.
+     */
+    val markerReason: String = "",
     /** Einmal gezaehlt beim Scan - nicht bei jeder Anzeige neu gefiltert. */
     val videoCount: Int = items.count { it.kind == MediaKind.VIDEO },
     val imageCount: Int = items.size - videoCount

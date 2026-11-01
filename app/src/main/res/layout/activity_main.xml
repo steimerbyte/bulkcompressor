@@ -108,11 +108,27 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <TextView
-                    style="@style/SectionLabel"
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/label_folder" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        style="@style/SectionLabel"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/label_folder" />
+
+                    <!-- Laeuft, solange der Ordner gelesen wird; zeichnet
+                         im Ruhezustand nichts, behaelt aber den Platz. -->
+                    <com.steimerbyte.bulkcompressor.ui.ScanBeacon
+                        android:id="@+id/scan_beacon"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:importantForAccessibility="no" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/text_folder"
@@ -124,18 +140,43 @@
                     android:textColor="@color/nothing_white"
                     android:textSize="12sp" />
 
-                <Button
-                    android:id="@+id/button_pick"
+                <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:background="@drawable/button_background_outline"
-                    android:fontFamily="monospace"
-                    android:letterSpacing="0.08"
-                    android:text="@string/button_pick"
-                    android:textAllCaps="false"
-                    android:textColor="@color/nothing_white"
-                    android:textSize="14sp" />
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/button_pick"
+                        android:layout_width="0dp"
+                        android:layout_height="48dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/button_background_outline"
+                        android:fontFamily="monospace"
+                        android:letterSpacing="0.08"
+                        android:text="@string/button_pick"
+                        android:textAllCaps="false"
+                        android:textColor="@color/nothing_white"
+                        android:textSize="14sp" />
+
+                    <!-- Zweiter Start ohne neuen Systemdialog: der Ordner
+                         ist bereits freigegeben, nur die Liste ist alt. -->
+                    <Button
+                        android:id="@+id/button_rescan"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/button_background_outline"
+                        android:fontFamily="monospace"
+                        android:letterSpacing="0.08"
+                        android:minWidth="0dp"
+                        android:paddingStart="14dp"
+                        android:paddingEnd="14dp"
+                        android:text="@string/button_rescan"
+                        android:textAllCaps="false"
+                        android:textColor="@color/nothing_white"
+                        android:textSize="12sp" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/text_summary"

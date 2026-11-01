@@ -46,6 +46,7 @@ import com.steimerbyte.bulkcompressor.ui.SegmentBar
 import com.steimerbyte.bulkcompressor.ui.SoundKit
 import com.steimerbyte.bulkcompressor.ui.StatsBoard
 import com.steimerbyte.bulkcompressor.ui.StatsFormat
+import com.steimerbyte.bulkcompressor.ui.ScanBeacon
 import com.steimerbyte.bulkcompressor.ui.TerminalPanel
 
 /**
@@ -108,6 +109,10 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private lateinit var markRetag: TextView
     private lateinit var textAccessHint: TextView
     private lateinit var buttonAccess: Button
+    private lateinit var buttonRescan: Button
+    /** true, solange ein Ordner gelesen wird. */
+    private var scanning = false
+    private lateinit var scanBeacon: ScanBeacon
     private lateinit var groupProgress: LinearLayout
     private lateinit var segmentBar: SegmentBar
     private lateinit var textPercent: TextView
@@ -213,6 +218,18 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             SoundKit.play(SoundKit.Click.TICK)
             pickFolder()
         }
+        buttonRescan.setOnClickListener {
+            SoundKit.play(SoundKit.Click.TICK)
+            // Derselbe Weg wie nach der Ordnerauswahl: der Freigabe-Token
+            // liegt schon vor, es geht nur um eine neue Liste.
+            val uri = treeUri
+            if (uri == null) {
+                Log.i(TAG, "Neu scannen ohne Ordner - Auswahl wird geoeffnet")
+                pickFolder()
+            } else {
+                startScan(uri)
+            }
+        }
         buttonStats.setOnClickListener {
             SoundKit.play(SoundKit.Click.TICK)
             runCatching { startActivity(Intent(this, StatsActivity::class.java)) }
@@ -236,6 +253,10 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             requestAllFilesAccess()
         }
         applySettingsToViews()
+        // Grundzustand: ohne Ordner ist der zweite Knopf gesperrt. Ohne
+        // diesen Aufruf steht er beim Kaltstart in voller Helligkeit da,
+        // obwohl er nichts tun kann.
+        updateRescanButton()
         requestLegacyStoragePermission()
         restoreFolder()
         resumeInterruptedRun()
@@ -296,6 +317,8 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     private fun bindViews() {
         textFolder = findViewById(R.id.text_folder)
+        buttonRescan = findViewById(R.id.button_rescan)
+        scanBeacon = findViewById(R.id.scan_beacon)
         textSub = findViewById(R.id.text_sub)
         textSummary = findViewById(R.id.text_summary)
         textSelection = findViewById(R.id.text_selection)
@@ -735,11 +758,15 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             return
         }
         treeUri = uri
+        updateRescanButton()
         textSub.visibility = View.GONE
         startScan(uri)
     }
 
     private fun startScan(uri: Uri) {
+        scanBeacon.start()
+        scanning = true
+        updateRescanButton()
         textFolder.text = FolderPath.display(uri)
         textSummary.visibility = View.VISIBLE
         textSummary.text = getString(R.string.scan_scanning)
@@ -766,11 +793,30 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
                 result.onSuccess { applyScan(it) }
                     .onFailure {
                         Log.w(TAG, "Ordner-Scan fehlgeschlagen: $uri", it)
+                        scanBeacon.stop()
+                        scanning = false
+                        updateRescanButton()
                         clearScan()
                         textSummary.text = getString(R.string.scan_failed)
                     }
             }
         }, "ordner-scan").start()
+    }
+
+    /**
+     * Der zweite Knopf ist nur sinnvoll, solange ein Ordner freigegeben ist
+     * und gerade kein Scan laeuft. Ohne Ordner oeffnet ihn der andere
+     * Knopf; waehrend eines Laufs wuerde ein zweiter Start den ersten
+     * abbrechen, was wie ein Fehler aussieht.
+     *
+     * Die Abschwaechung gehoert dazu: der Knopf hat eine feste
+     * Textfarbe, ein gesperrter Knopf saehe sonst genauso aus wie ein
+     * benutzbarer.
+     */
+    private fun updateRescanButton() {
+        val enabled = treeUri != null && !scanning
+        buttonRescan.isEnabled = enabled
+        buttonRescan.alpha = if (enabled) 1f else DISABLED_ALPHA
     }
 
     /** Leerer Zustand nach einem fehlgeschlagenen Scan - keine Reste in der Liste. */
@@ -783,6 +829,9 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     }
 
     private fun applyScan(result: ScanResult) {
+        scanBeacon.stop()
+        scanning = false
+        updateRescanButton()
         scanResult = result
         selectedIds.clear()
         result.items.forEach { selectedIds.add(it.docId) }
@@ -1186,6 +1235,9 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
         /** Takt der Speichertafel - ein Blick pro Sekunde reicht. */
         private const val STATS_INTERVAL_MS = 1000L
+
+        /** Deckkraft eines gesperrten Knopfes mit fester Textfarbe. */
+        private const val DISABLED_ALPHA = 0.35f
 
         /** Nach dieser Zeit muss der Dienst den Auftrag angenommen haben. */
         private const val START_CHECK_MS = 4000L

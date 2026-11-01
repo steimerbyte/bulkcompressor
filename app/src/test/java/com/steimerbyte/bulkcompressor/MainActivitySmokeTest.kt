@@ -53,6 +53,46 @@ class MainActivitySmokeTest {
     }
 
     @Test
+    fun `neu scannen ist ohne ordner gesperrt und oeffnet die auswahl`() {
+        val activity = activity()
+        val rescan = activity.findViewById<android.widget.Button>(R.id.button_rescan)
+
+        // Ohne freigegebenen Ordner gibt es nichts zu scannen; der Knopf
+        // sieht gesperrt aus und oeffnet nach dem Tippen den Systemdialog
+        // statt still nichts zu tun.
+        assertFalse("Ohne Ordner muss der Knopf gesperrt sein", rescan.isEnabled)
+        assertTrue("Gesperrt muss sichtbar schwaecher sein", rescan.alpha < 1f)
+
+        rescan.performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val started = shadowOf(activity).nextStartedActivity
+        assertNotNull("Tippen muss die Ordnerauswahl oeffnen", started)
+        assertEquals(
+            android.content.Intent.ACTION_OPEN_DOCUMENT_TREE,
+            started.action
+        )
+    }
+
+    @Test
+    fun `nach einem scan laesst sich neu scannen und der knopf sperrt sich beim start`() {
+        val activity = activity()
+        val rescan = activity.findViewById<android.widget.Button>(R.id.button_rescan)
+        activity.applyScanForTest(
+            android.net.Uri.parse("content://com.android.externalstorage.documents/tree/primary%3ADCIM"),
+            ScanResult(items = emptyList(), folderCount = 3, truncated = false)
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertTrue("Mit Ordner muss der Knopf frei sein", rescan.isEnabled)
+
+        rescan.performClick()
+        // startScan() sperrt den Knopf sofort: ein zweiter Start wuerde den
+        // laufenden Scan abbrechen.
+        assertFalse("Waehrend eines Scans darf der Knopf nicht klicken", rescan.isEnabled)
+    }
+
+    @Test
     fun `aktive konfiguration nennt alle drei bloecke`() {
         val activity = activity()
         val text = activity.findViewById<TextView>(R.id.text_active_config).text.toString()

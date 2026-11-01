@@ -19,6 +19,7 @@
     <string name="label_folder">ORDNER</string>
     <string name="folder_none">Kein Ordner gewählt</string>
     <string name="button_pick">Ordner wählen</string>
+    <string name="button_rescan">Neu scannen</string>
     <string name="scan_scanning">Ordner wird gelesen …</string>
     <string name="scan_empty">Keine Videos oder Bilder gefunden.</string>
     <string name="scan_summary">%1$d Videos · %2$d Bilder · %3$s</string>

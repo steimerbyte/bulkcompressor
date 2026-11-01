@@ -4,6 +4,18 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.7.3] – 2026-11-01
+
+### Neu
+
+- **Knopf „Neu scannen"** neben der Ordnerauswahl: derselbe Ordner wird
+  erneut gelesen, ohne den Systemdialog. Gesperrt und sichtbar
+  zurückgenommen, solange kein Ordner freigegeben ist oder ein Scan läuft.
+- **Punktmatrix neben `ORDNER`**, die während des Lesens läuft (3×3
+  Punkte, heller Kopf mit Nachlauf). Sie zeichnet im Ruhezustand nichts
+  und behält nur ihren Platz, damit beim Start nichts springt; bei
+  abgeschalteten Systemanimationen steht das Muster still.
+
 ## [1.7.2] – 2026-11-01
 
 ### Behoben

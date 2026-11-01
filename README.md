@@ -25,7 +25,12 @@ Kein Konto. Kein Netzwerk. Keine Analytics. Kein `INTERNET`-Recht.
 
 1. **Ordner wählen** über das Android-Systemdialog (Storage Access
    Framework). Die App bekommt dauerhaften Zugriff auf genau diesen
-   Ordner und liest rekursiv Videos und Bilder heraus.
+   Ordner und liest rekursiv Videos und Bilder heraus. Daneben sitzt
+   **Neu scannen**: derselbe Ordner, neue Liste, ohne den Systemdialog —
+   für den Fall, dass seit dem letzten Lauf Dateien dazugekommen sind.
+   Solange gelesen wird, läuft rechts neben `ORDNER` eine kleine
+   Punktmatrix; ohne gewählten Ordner ist der Knopf gesperrt und sichtbar
+   zurückgenommen.
 2. **Preset einstellen** (siehe unten).
 3. **Auswählen**, was bearbeitet wird — alles oder einzelne Dateien.
 4. **Start.** Der Knopf ganz unten ist Start und Stopp in einem:
@@ -62,6 +67,12 @@ Einstellungen.
 Oben rechts im Kopf sitzt ein **Diagramm-Symbol** — es öffnet die
 Statistikseite (siehe unten).
 
+Unter dem Ordnerpfad liegt die Knopfreihe **Ordner wählen** / **Neu
+scannen**. Der zweite Knopf braucht keinen neuen Dialog: der Freigabe-Token
+liegt vor, es geht nur um eine frische Liste. Während eines Scans ist er
+gesperrt — ein zweiter Start würde den laufenden abbrechen und sähe wie ein
+Fehler aus.
+
 Der **Startknopf sitzt fest am unteren Rand** und wird von der Seite nicht
 weggescrollt — bei einem Ordner mit hunderten Dateien ist er sonst erst
 nach langem Wischen zu erreichen. Das Protokoll liegt zwischen Inhalt und
@@ -81,7 +92,13 @@ Drei Regeln, die im Layout stecken:
   auf dem Bildschirm.
 - **Ein gesperrter Startknopf sieht gesperrt aus.** Ohne Auswahl trägt er
   eine schwache Kante statt der weißen Fläche — ein weißer Knopf, der
-  nicht reagiert, ist eine Falle.
+  nicht reagiert, ist eine Falle. Für „Neu scannen" gilt dasselbe: er hat
+  eine feste Textfarbe, ein gesperrter Knopf bekäme sonst dieselbe
+  Deckkraft wie ein benutzbarer.
+- **Animation, die man abschalten kann.** Die Punktmatrix beim Scannen
+  zeichnet im Ruhezustand gar nichts und behält nur ihren Platz, damit
+  nichts springt. Ist im System „Animationen entfernen" gewählt, steht das
+  Muster still, statt zu laufen.
 
 ## Presets
 

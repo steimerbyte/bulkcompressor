@@ -4,6 +4,56 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.8.0] – 2026-11-01
+
+### Neu
+
+- **Ein zweiter Dauerton für einen laufenden Auftrag.** Der Scan hat
+  seinen (D2, 73,5 Hz) — jetzt hat der Lauf seinen eigenen: gleiche
+  Bauart, gleiche Lautstärke, aber eine Quarte höher (G2, 98 Hz) und mit
+  doppelt so schnellem Puls (1 Hz statt 0,5 Hz). Gemessen: 510 gegen 382
+  Nulldurchgänge in zwei Sekunden, Ähnlichkeit der Spektren 0,04 —
+  verwandt genug, um als dasselbe Gerät zu gelten, verschieden genug, um
+  im Vorbeihören zu wissen, ob gelesen oder gerechnet wird. Auch hier
+  nichts über 400 Hz.
+
+  Er läuft **nur, solange die App sichtbar ist und der Auftrag läuft**:
+  der Zustand kommt über `JobBus`, im Hintergrund (`onStop`) schweigt er
+  — ein Summen aus der Hosentasche wäre schlimmer als keins —, und beim
+  Zurückkommen wird der Zustand neu gelesen, statt sich auf verpasste
+  Meldungen zu verlassen. Ende des Laufs, Abbruch und geschlossene
+  Activity beenden ihn.
+
+  Laufen Scan und Auftrag gleichzeitig (möglich: ein Ordner lässt sich
+  während eines Laufs neu einlesen), teilen sich beide den Pegel auf
+  0,7: jeder einzeln hörbar, zusammen nicht lauter als einer plus Klick.
+
+### Geändert
+
+- **Der Dauerton ist dumpf und deutlich lauter.** 1.7.6 summte eine Quinte
+  höher (A2, 110 Hz) mit Quinte, Oktave und einem feinen Schimmer bei
+  1320 Hz — gemessen war das ein heller, schlanker Ton. Jetzt liegt der
+  Grundton bei 73,5 Hz (D2) mit 0,5-Hz-Schwebung, dazu Oktave (147 Hz)
+  und Quinte (220,5 Hz); der Schimmer und alles über 300 Hz sind weg,
+  ein Tiefpass bei 380 Hz nimmt die letzte Kante. Gemessen: 85 % der
+  Energie unter 150 Hz, **nichts** über 400 Hz (vorher 0,1 % im Bereich
+  400–2000 Hz, Linien bis 330 Hz). Dumpf heißt: kein Glanz, weicher
+  Ansatz — deshalb blendet der Ton jetzt auch über 240 ms ein, statt
+  mit einem Stoß zu beginnen.
+
+  **Lauter um ~10 dB:** Effektivwert 0,035 → 0,12 (−29 → −18 dBFS). Die
+  Spitze bleibt bei 0,32, also unter dem Start-Klick (0,85); ohne die
+  Einblendung wären beide gleichzeitig bei 1,17 und damit über der
+  Begrenzung — genau deshalb blendet er ein.
+
+  Der Tiefpass läuft **zirkulär** (ein Durchlauf verwirft nur den
+  Einschwingzustand, der zweite wird behalten): ein Filter, der an der
+  Naht neu einschwingt, würde die Schleife genau dort knacken lassen.
+  Ein Test prüft weiterhin, dass der Sprung an der Naht kleiner ist als
+  der größte Sprung im Ton selbst, jetzt zusätzlich, dass der Ton
+  dumpf ist (Nulldurchgänge statt Höhen) und dass er die geforderte
+  Lautstärke hat.
+
 ## [1.7.6] – 2026-11-01
 
 ### Neu

@@ -104,44 +104,86 @@ def normalize(samples, peak=0.89, fade_ms=0.4):
     return [x / hi * peak for x in faded]
 
 
-def scan_hum(duration_s=2.0):
-    """Dauerton fuer die Dauer des Scans - absichtlich nahtlos.
+def hum(partials, pulse_hz, duration_s=2.0, cutoff_hz=380.0):
+    """Gemeinsamer Baukasten der beiden Dauertoene.
 
-    Damit eine Schleife nicht klickt, muss die letzte Probe exakt an die
-    erste anschliessen. Das geht hier ohne jede Blende, weil **alle**
-    Teiltoene ganzzahlige Vielfache von 1/duration sind: bei 2 s also
-    Vielfache von 0,5 Hz. 110 Hz sind 220 Perioden, 110,5 Hz sind 221 -
-    die Schwebung von 0,5 Hz ist damit Teil der Schleife und nicht ihr
-    Ende. Auch die Huellkurven (0,5 Hz und 3 Hz) gehen ganzzahlig auf.
-
-    Ein Sinus-Piep waere billig, klingt aber nach Messtechnik; das
-    Klangbild hier ist ein leises Summen mit langsamem Atmen und einem
-    feinen Schimmer darueber - eine Maschine, die arbeitet.
-
-    Kein Ein- und Ausblenden: [normalize] blendet an beiden Enden, und
-    genau das wuerde die Naht zerstueckeln. Deshalb skaliert
-    [normalize_loop] nur.
+    Beide sind sinusfoermig aufgebaut, haben keinen Glanz (Tiefpass bei
+    380 Hz) und sind nahtlos schleifenfaehig: alle Teiltoene und die
+    Pulsfrequenz muessen ganzzahlige Vielfache von 1/duration sein, also
+    von 0,5 Hz.
     """
     total = int(RATE * duration_s)
-    partials = [
-        (110.0, 0.50),   # Grundton A2
-        (110.5, 0.30),   # 0,5 Hz daneben -> Schwebung
-        (165.0, 0.18),   # Quinte
-        (220.0, 0.12),   # Oktave
-        (330.0, 0.06),
-    ]
     out = []
     for i in range(total):
         t = i / RATE
         v = 0.0
         for freq, amp in partials:
             v += amp * math.sin(2.0 * math.pi * freq * t)
-        # Atmen: eine Periode je Schleife.
-        v *= 0.75 + 0.25 * math.cos(2.0 * math.pi * 0.5 * t)
-        # Schimmer, damit es nicht nach Netzbrummen klingt.
-        v += 0.030 * math.sin(2.0 * math.pi * 1320.0 * t) * (
-            0.5 + 0.5 * math.sin(2.0 * math.pi * 3.0 * t))
+        # Puls: flacher als eine Huellkurve, damit der Ton steht statt zu
+        # atmen. Eine Periode je Pulszyklus, ganzzahlig in der Schleife.
+        v *= 0.85 + 0.15 * math.cos(2.0 * math.pi * pulse_hz * t)
         out.append(v)
+    return lowpass_circular(out, cutoff_hz)
+
+
+def scan_hum(duration_s=2.0):
+    """Dumpfer Dauerton fuer die Dauer des **Scans**.
+
+    Grundton D2 (73,5 Hz) mit 0,5-Hz-Schwebung, darueber die Oktave und
+    die Quinte; nichts ueber 300 Hz. Der langsame Puls (0,5 Hz = eine
+    Periode je Schleife) liest sich als ruhiges Arbeiten.
+    """
+    return hum(
+        partials=[
+            (73.5, 0.55),    # Grundton D2
+            (74.0, 0.35),    # 0,5 Hz daneben -> Schwebung
+            (147.0, 0.50),   # Oktave (traegt auf kleinen Lautsprechern)
+            (220.5, 0.38),   # Quinte + Oktave
+            (294.0, 0.14),   # kaum noch - Kante, nicht Glanz
+        ],
+        pulse_hz=0.5,
+        duration_s=duration_s,
+    )
+
+
+def job_hum(duration_s=2.0):
+    """Dumpfer Dauerton fuer einen **laufenden Auftrag**.
+
+    Gleiche Bauart wie [scan_hum] - dieselben Verhaeltnisse, derselbe
+    Tiefpass, derselbe Pegel - aber eine Quarte hoeher (G2, 98 Hz) und
+    mit doppelt so schnellem Puls. Damit ist er im Vorbeigehoeren von
+    der Scan-Tonspur zu unterscheiden, ohne aus der Familie zu fallen:
+    zwei Toene derselben Maschine, einer liest, einer arbeitet.
+    """
+    return hum(
+        partials=[
+            (98.0, 0.55),    # Grundton G2
+            (98.5, 0.35),    # 0,5 Hz daneben -> Schwebung
+            (196.0, 0.50),   # Oktave
+            (294.0, 0.30),   # Quinte
+        ],
+        pulse_hz=1.0,
+        duration_s=duration_s,
+    )
+
+
+def lowpass_circular(samples, cutoff_hz):
+    """Einpoliger Tiefpass, zirkulaer angewandt.
+
+    Ein Filter ueber einen Puffer, der eine Schleife werden soll, muss
+    selbst schleifenfest sein: an der Naht haette er sonst seinen
+    Einschwingvorgang, und der klickt. Deshalb laeuft er einmal ueber den
+    Puffer (Ergebnis verworfen - der Zustand ist danach auf dem
+    stationaeren Wert) und erst der zweite Durchlauf wird behalten.
+    """
+    a = math.exp(-2.0 * math.pi * cutoff_hz / RATE)
+    y = 0.0
+    for x in samples:
+        y = (1.0 - a) * x + a * y
+    out = []
+    for x in samples:
+        y = (1.0 - a) * x + a * y
+        out.append(y)
     return out
 
 
@@ -218,15 +260,19 @@ def main():
         peak=0.85))
 
     # Dauer des Scans: laeuft, solange gelesen wird, und endet mit dem
-    # Lesevorgang. Effektivwert 0,035 (-29 dBFS) - hoerbar, aber deutlich
-    # unter den Klicks; er soll Zustand melden, nicht beschallen.
-    hum = normalize_loop(scan_hum(2.0), rms=0.035)
-    write_wav(os.path.join(OUT, "scan_hum.wav"), hum)
-    peak = max(abs(x) for x in hum)
-    seam = abs(hum[0] - hum[-1])
-    step = max(abs(hum[i + 1] - hum[i]) for i in range(len(hum) - 1))
-    print(f"scan_hum: Spitze {peak:.3f} · Naht {seam:.5f} "
-          f"(groesster Sprung im Ton {step:.5f})")
+    # Lesevorgang. Effektivwert 0,12 (-18 dBFS) - rund 10 dB lauter als
+    # die erste Fassung. Der Spitzenwert bleibt bei etwa 0,35, damit der
+    # Start-Klick (Spitze 0,85) beim gleichzeitigen Anlauf nicht in die
+    # Begrenzung laeuft; App-seitig blendet der Ton ohnehin ein.
+    for name, samples in (("scan_hum", scan_hum(2.0)), ("job_hum", job_hum(2.0))):
+        loop = normalize_loop(samples, rms=0.12)
+        write_wav(os.path.join(OUT, name + ".wav"), loop)
+        peak = max(abs(x) for x in loop)
+        seam = abs(loop[0] - loop[-1])
+        step = max(abs(loop[i + 1] - loop[i]) for i in range(len(loop) - 1))
+        crossings = sum(1 for i in range(1, len(loop)) if (loop[i - 1] < 0) != (loop[i] < 0))
+        print(f"{name}: Spitze {peak:.3f} · Naht {seam:.5f} "
+              f"(groesster Sprung {step:.5f}) · Nulldurchgaenge {crossings}")
 
 
 if __name__ == "__main__":

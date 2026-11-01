@@ -385,7 +385,8 @@ eigenen Code.
 * **Abbruch** wirkt zwischen zwei Dateien und mitten im Video (der
   laufende Transcode wird beendet, die Zieldatei ist eine
   Cache-Temp-Datei und wird verworfen — das Original bleibt intakt).
-* **Klickgeräusche:** `SoundPool` mit fünf kurzen WAV-Dateien (4–16 KB),
+* **Klickgeräusche:** `SoundPool` mit fünf kurzen WAV-Dateien (4–16 KB)
+  und zwei Schleifen-Dauertönen (je 172 KB),
   erzeugt von `tools/generate_click_sounds.py` — heller Klick für Chips,
   Liste und Werkzeugleiste, tieferer für Schalter, größerer für
   START, dazu zwei Töne für den Ordner-Scan: ein Doppelschlag mit
@@ -400,8 +401,27 @@ eigenen Code.
   ist auf vielen Geräten ab Werk aus, und dann stand der Schalter in der
   App sichtbar auf an, ohne dass ein Ton kam. Welche der drei Regeln
   gerade greift, steht im Protokoll (`Sound`, eine Zeile je Wechsel).
-  Die beiden Scan-Töne folgen demselben Schalter: wer die Klicks
-  abschaltet, hört auch den Scan nicht.
+  **Während** der Scan läuft, liegt unter den Klicks ein Dauerton:
+  ein dumpfes Summen mit Grundton 73,5 Hz (D2), 0,5-Hz-Schwebung,
+  Oktave bei 147 Hz und Quinte bei 220,5 Hz — gemessen 85 % der Energie
+  unter 150 Hz, nichts über 400 Hz. Effektivwert 0,12 (−18 dBFS), also
+  etwa 10 dB lauter als die erste Fassung, Spitze 0,32; er blendet über
+  240 ms ein (sonst liefe er mit dem Start-Klick über die Begrenzung)
+  und über 200 ms aus. Die Datei ist eine **nahtlose Schleife**: alle
+  Teiltöne sind ganzzahlige Vielfache von 0,5 Hz, der Sprung an der Naht
+  (222/32768) ist kleiner als der größte Sprung im Ton selbst (245) —
+  eine Blende würde genau das zerstören.
+  Für einen **laufenden Auftrag** gibt es einen zweiten Dauerton
+  derselben Bauart, eine Quarte höher (G2, 98 Hz) und mit doppelt so
+  schnellem Puls — gemessen 510 statt 382 Nulldurchgänge in zwei
+  Sekunden, Spektralähnlichkeit 0,04, also verwandt und trotzdem zu
+  unterscheiden. Er läuft nur, solange die App sichtbar ist **und** der
+  Auftrag läuft (`JobBus`); im Hintergrund schweigt er, beim
+  Zurückkommen wird der Zustand neu gelesen. Laufen Scan und Auftrag
+  gleichzeitig, teilen sich beide den Pegel (jeder 0,7), damit zwei
+  Töne plus Klick nicht in die Begrenzung laufen.
+  Alle Töne des Scans und des Laufs folgen demselben Schalter: wer die
+  Klicks abschaltet, hört weder Scan noch Lauf.
 * **Speicherwächter** (`MemoryGuard`): bewusst *eine* Datei nach der
   anderen, kein paralleles Kodieren — der Speicherbedarf bleibt konstant.
   Die Einordnung ist eine reine Funktion und damit ohne Gerät geprüft.
@@ -417,7 +437,7 @@ eigenen Code.
 ## Installation
 
 **Download:** [neuestes Release](https://github.com/steimerbyte/bulkcompressor/releases/latest)
-— die APK liegt dort als `app-release.apk`.
+— die APK liegt dort als `BulkCompressor-<Version>.apk`.
 
 1. APK aufs Gerät übertragen, antippen, „App aus unbekannter Quelle"
    bestätigen, installieren
@@ -439,10 +459,15 @@ Auf einem echten Gerät wurde diese Fassung noch nicht ausgeführt — siehe
   (`colr`/`mdcv`) überleben das Umkodieren nicht. Aus HDR10 wird SDR
   mit derselben Auflösung.
 * **Die Töne sind gemessen, nicht gehört.** Tonhöhe, Pegel und Ablauf
-  der fünf Klick-Dateien stehen als Zahl fest (860 → 1290 Hz für den
-  Scan-Anlauf, 550 Hz für das Ende, Spitze 0,85), und ein Test prüft,
-  dass jeder Ton wirklich bei `SoundPool` ankommt. Ob sie auf einem
-  Telefonlautsprecher gut klingen, entscheidet das Ohr am Gerät.
+  der Klick-Dateien stehen als Zahl fest (860 → 1290 Hz für den
+  Scan-Anlauf, 550 Hz für das Ende, Spitze 0,85), beim Dauerton
+  Grundton 73,5 Hz und Effektivwert 0,12; Tests prüfen, dass jeder Ton
+  bei `SoundPool` ankommt, dass er schleift (loop −1) und dass die
+  Schleife an der Naht nicht knackt. Ob sie auf einem
+  Telefonlautsprecher gut klingen, entscheidet das Ohr am Gerät —
+  insbesondere sitzt ein 73-Hz-Grundton unterhalb dessen, was kleine
+  Lautsprecher noch wiedergeben; hörbar ist dort vor allem die
+  Oktave bei 147 Hz und die Quinte bei 220 Hz.
 * **Kein Bild-Auflösungs-Limit**, nur Qualität — ein 48-MP-Foto bleibt
   48 MP groß, nur mit weniger Byte pro Pixel.
 * **Die Speicherbremse ist auf einem Gerät nicht erprobt.** Schwellen

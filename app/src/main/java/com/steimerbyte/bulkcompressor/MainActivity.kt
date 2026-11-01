@@ -284,6 +284,10 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     override fun onStop() {
         statsHandler.removeCallbacks(statsTick)
+        // Der Auftrag laeuft im Dienst weiter, der Ton aber meldet einen
+        // Zustand dieser Oberflaeche - im Hintergrund waere er ein Summen
+        // aus der Hosentasche.
+        SoundKit.stopJobHum()
         JobBus.removeListener(this)
         Log.removeListener(logListener)
         super.onStop()
@@ -297,6 +301,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         // Ein laufender Scan kann diese Activity ueberleben (er laeuft in
         // einem eigenen Thread) - sein Ton darf das nicht.
         SoundKit.stopScanHum()
+        SoundKit.stopJobHum()
         super.onDestroy()
     }
 
@@ -312,6 +317,10 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         // Die Systemeinstellung fuer Beruehrungsklaenge kann sich
         // waehrend der Laufzeit geaendert haben.
         SoundKit.refresh(this)
+        // Waehrend die Oberflaeche weg war, konnte ein Auftrag laufen (oder
+        // enden) - der Zustand wird beim Zurueckkommen neu gelesen, statt
+        // sich auf die verpassten Meldungen zu verlassen.
+        if (JobBus.state.running) SoundKit.startJobHum() else SoundKit.stopJobHum()
     }
 
     // ------------------------------------------------------------------
@@ -1141,6 +1150,10 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         runOnUiThread {
             if (isFinishing) return@runOnUiThread
             if (state.running || state.finished || state.cancelled) startPending = false
+            // Der Auftragston haengt am Zustand, nicht am Knopf: er laeuft,
+            // solange dieser Lauf laeuft, und endet mit ihm. Ein Zustand
+            // kommt nur im Vordergrund an (der Listener haengt an onStop).
+            if (state.running) SoundKit.startJobHum() else SoundKit.stopJobHum()
             renderStartButton()
             if (!state.running && !state.finished && !state.cancelled) return@runOnUiThread
 

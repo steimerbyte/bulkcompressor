@@ -80,9 +80,9 @@ class SoundKitTest {
         allRawIds.forEach { shadow.notifyResourceLoaded(it, true) }
     }
 
-    private fun humPlaybacks(): List<ShadowSoundPool.Playback> {
+    private fun humPlaybacks(id: Int = R.raw.scan_hum): List<ShadowSoundPool.Playback> {
         val pool = requireNotNull(SoundKit.poolForTest())
-        return Shadow.extract<ShadowSoundPool>(pool).getResourcePlaybacks(R.raw.scan_hum)
+        return Shadow.extract<ShadowSoundPool>(pool).getResourcePlaybacks(id)
     }
 
     /** PCM-Proben einer WAV-Datei aus res/raw, ohne Fremdbibliothek. */
@@ -110,7 +110,7 @@ class SoundKitTest {
 
     private val allRawIds = listOf(
         R.raw.click_tick, R.raw.click_toggle, R.raw.click_thunk,
-        R.raw.scan_start, R.raw.scan_done, R.raw.scan_hum
+        R.raw.scan_start, R.raw.scan_done, R.raw.scan_hum, R.raw.job_hum
     )
 
     @Before
@@ -266,7 +266,7 @@ class SoundKitTest {
             -1,
             played.first().loop
         )
-        assertTrue("Der Strom muss als laufend verbucht sein", SoundKit.humPlayingForTest())
+        assertTrue("Der Strom muss als laufend verbucht sein", SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
     }
 
     @Test
@@ -289,17 +289,76 @@ class SoundKitTest {
         SoundKit.startScanHum()
 
         SoundKit.stopScanHum()
-        assertFalse("Nach dem Ende des Scans darf kein Strom laufen", SoundKit.humPlayingForTest())
+        assertFalse("Nach dem Ende des Scans darf kein Strom laufen", SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
 
         // Ausblendung auslaufen lassen: sie darf weder krachen noch den
         // Zustand verfaelschen.
         shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(400))
         assertEquals("Die Ausblendung darf den Strom nicht neu starten", 1, humPlaybacks().size)
-        assertFalse(SoundKit.humPlayingForTest())
+        assertFalse(SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
 
         SoundKit.startScanHum()
-        assertTrue("Ein neuer Scan muss den Ton wieder anlaufen lassen", SoundKit.humPlayingForTest())
+        assertTrue("Ein neuer Scan muss den Ton wieder anlaufen lassen", SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
         assertEquals(2, humPlaybacks().size)
+    }
+
+    @Test
+    fun `dauerton blendet ein statt zu stossen`() {
+        markLoaded()
+
+        SoundKit.startScanHum()
+
+        // Der Anlaufwert ist die einzige Lautstaerke, die der Test sehen
+        // kann (der Shadow zeichnet nur den play-Aufruf auf) - und genau
+        // darauf kommt es an: mit 0,32 Spitze und dem Start-Klick bei
+        // 0,85 waere der erste Moment ueber der Begrenzung.
+        assertEquals(
+            "Der Ton muss bei 0 anlaufen - sonst liefe er mit dem Start-Klick in die Begrenzung",
+            0f,
+            humPlaybacks().single().leftVolume,
+            0.001f
+        )
+
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(100))
+        val mid = SoundKit.humVolumeForTest(SoundKit.Hum.SCAN)
+        assertTrue(
+            "Nach 100 ms steht die Lautstaerke schon bei $mid - das ist ein Stoss, keine Einblendung",
+            mid > 0f && mid < 0.75f
+        )
+
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(400))
+        assertEquals(
+            "Nach der Einblendung muss die volle Lautstaerke stehen",
+            1f,
+            SoundKit.humVolumeForTest(SoundKit.Hum.SCAN),
+            0.001f
+        )
+        assertTrue("Die Einblendung darf den Ton nicht beenden", SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
+    }
+
+    @Test
+    fun `abgebrochener scan blendet von der erreichten lautstaerke aus`() {
+        markLoaded()
+        SoundKit.startScanHum()
+        // Nur der erste Rampenschritt ist gelaufen.
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(40))
+
+        SoundKit.stopScanHum()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(800))
+
+        assertFalse(SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
+        assertEquals(
+            "Nach der Ausblendung muss die Lautstaerke auf 0 stehen",
+            0f,
+            SoundKit.humVolumeForTest(SoundKit.Hum.SCAN),
+            0.001f
+        )
+
+        // Und ein neuer Scan muss wieder sauber anlaufen (nicht bei der
+        // alten, halben Lautstaerke stehenbleiben).
+        SoundKit.startScanHum()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+        assertEquals(1f, SoundKit.humVolumeForTest(SoundKit.Hum.SCAN), 0.001f)
     }
 
     @Test
@@ -310,7 +369,7 @@ class SoundKitTest {
         SoundKit.startScanHum()
 
         assertTrue("Aus bleibt aus", humPlaybacks().isEmpty())
-        assertFalse(SoundKit.humPlayingForTest())
+        assertFalse(SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
 
         SoundKit.setEnabled(true)
         SoundKit.startScanHum()
@@ -321,13 +380,13 @@ class SoundKitTest {
     fun `abschalten beendet einen laufenden dauerton`() {
         markLoaded()
         SoundKit.startScanHum()
-        assertTrue(SoundKit.humPlayingForTest())
+        assertTrue(SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
 
         SoundKit.setEnabled(false)
 
         assertFalse(
             "Wer den Ton mitten im Scan abschaltet, will ihn sofort nicht mehr hoeren",
-            SoundKit.humPlayingForTest()
+            SoundKit.humPlayingForTest(SoundKit.Hum.SCAN)
         )
     }
 
@@ -347,12 +406,12 @@ class SoundKitTest {
         // App-Start". Der Ton darf nicht verloren gehen.
         SoundKit.startScanHum()
 
-        assertTrue("Der Wunsch muss vorgemerkt sein", SoundKit.humWantedForTest())
+        assertTrue("Der Wunsch muss vorgemerkt sein", SoundKit.humWantedForTest(SoundKit.Hum.SCAN))
         assertTrue("Ohne dekodierte Datei darf nichts anlaufen", humPlaybacks().isEmpty())
 
         markLoaded()
 
-        assertTrue("Nach dem Laden muss die Schleife anlaufen", SoundKit.humPlayingForTest())
+        assertTrue("Nach dem Laden muss die Schleife anlaufen", SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
         assertEquals(1, humPlaybacks().size)
     }
 
@@ -391,10 +450,156 @@ class SoundKitTest {
             tail > 0.5
         )
 
-        // Effektivwert im geplanten Band (-29 dBFS): hoerbar, aber klar
-        // unter den Klicks (0,11-0,12).
+        // Lautstaerke: der Ton soll wesentlich lauter sein als die erste
+        // Fassung (-29 dBFS). Untergrenze 0,10 haelt das fest, die
+        // Obergrenze 0,14 haelt ihn unter den Klicks (0,11-0,12 im
+        // Effektivwert, dort aber nur 50-180 ms lang) und laesst
+        // Spielraum fuer spaetere Aenderungen nur nach oben, nicht ins
+        // Clipping.
         val rms = all / 32767.0
-        assertTrue("Effektivwert $rms liegt ausserhalb 0,028-0,042", rms in 0.028..0.042)
+        assertTrue("Effektivwert ${"%.3f".format(rms)} ist zu leise (Soll 0,11-0,13)", rms in 0.11..0.13)
+        val peak = samples.maxOf { kotlin.math.abs(it.toInt()) } / 32767.0
+        assertTrue(
+            "Spitze $peak - zusammen mit dem Start-Klick (0,85) waere das ueber 1,0",
+            peak < 0.45
+        )
+    }
+
+    @Test
+    fun `dauerton ist dumpf und nicht hell`() {
+        val samples = pcm(R.raw.scan_hum)
+
+        // Ein dumpfer Ton hat kaum Nulldurchgaenge: die Zahl haengt an der
+        // Grundfrequenz, nicht an den Hoehen. Bei 73,5 Hz sind es 294 in
+        // zwei Sekunden; Hoehen wuerden sie nach oben treiben, ein
+        // 1320-Hz-Schimmer (die erste Fassung) auf ueber 5000. Der
+        // Spielraum bis 450 laesst die 0,5-Hz-Schwebung zu, die den
+        // Pegel periodisch kurz durch null fuehrt.
+        val crossings = (1 until samples.size).count { samples[it - 1] < 0 != samples[it] < 0 }
+        assertTrue(
+            "$crossings Nulldurchgaenge in 2 s - das ist kein dumpfer Ton (Soll 250-450)",
+            crossings in 250..450
+        )
+    }
+
+    @Test
+    fun `auftragston laeuft als endlose schleife`() {
+        markLoaded()
+
+        SoundKit.startJobHum()
+
+        val played = humPlaybacks(R.raw.job_hum)
+        assertEquals("Der Auftragston muss einmal anlaufen", 1, played.size)
+        assertEquals(-1, played.first().loop)
+        assertTrue(SoundKit.humPlayingForTest(SoundKit.Hum.JOB))
+        assertFalse(
+            "Der Auftragston darf die Scan-Tonspur nicht mit anwerfen",
+            SoundKit.humPlayingForTest(SoundKit.Hum.SCAN)
+        )
+    }
+
+    @Test
+    fun `auftragston endet mit dem auftrag`() {
+        markLoaded()
+        SoundKit.startJobHum()
+
+        SoundKit.stopJobHum()
+
+        assertFalse(SoundKit.humPlayingForTest(SoundKit.Hum.JOB))
+    }
+
+    @Test
+    fun `auftragston ist dumpf aber von der scan-tonspur unterscheidbar`() {
+        val job = pcm(R.raw.job_hum)
+        val scan = pcm(R.raw.scan_hum)
+
+        assertEquals("Beide Dauertoene sind 2 s lang", scan.size, job.size)
+
+        // Dumpf: die Nulldurchgaenge haengen an der Grundfrequenz, nicht an
+        // Hoehen. Hohe Anteile wuerden sie nach oben treiben.
+        fun crossings(samples: ShortArray) =
+            (1 until samples.size).count { samples[it - 1] < 0 != samples[it] < 0 }
+        val jobCrossings = crossings(job)
+        assertTrue(
+            "$jobCrossings Nulldurchgaenge - der Auftragston ist nicht dumpf (Soll 350-700)",
+            jobCrossings in 350..700
+        )
+
+        // Unterscheidbar: eine Quarte hoeher heisst rund ein Drittel mehr
+        // Nulldurchgaenge. Unter 60 waeren die beiden im Vorbeigehoeren
+        // dasselbe Signal.
+        val gap = kotlin.math.abs(jobCrossings - crossings(scan))
+        assertTrue(
+            "Nur $gap Nulldurchgaenge Unterschied - die beiden Toene waeren nicht zu unterscheiden",
+            gap >= 60
+        )
+
+        // Gleiche Lautstaerke: ein Zustandssignal darf nicht danach
+        // klingen, wie wichtig er ist.
+        fun rms(samples: ShortArray): Double =
+            Math.sqrt(samples.sumOf { it.toDouble() * it } / samples.size) / 32767.0
+        assertEquals(
+            "Beide Dauertoene muessen gleich laut sein",
+            rms(scan),
+            rms(job),
+            0.006
+        )
+    }
+
+    @Test
+    fun `beide toene teilen sich den pegel`() {
+        markLoaded()
+        SoundKit.startScanHum()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+        assertEquals(1f, SoundKit.humVolumeForTest(SoundKit.Hum.SCAN), 0.001f)
+
+        SoundKit.startJobHum()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+        val both = SoundKit.humVolumeForTest(SoundKit.Hum.SCAN)
+        assertTrue(
+            "Beide Toene stehen bei $both - zusammen waeren sie lauter als einer plus Klick",
+            both in 0.6f..0.75f
+        )
+        assertEquals(
+            "Der neue Ton muss denselben geteilten Pegel haben",
+            both,
+            SoundKit.humVolumeForTest(SoundKit.Hum.JOB),
+            0.001f
+        )
+
+        // Ende des Auftrags: der Scan laeuft allein und bekommt den Pegel zurueck.
+        SoundKit.stopJobHum()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+        assertEquals(
+            "Der verbliebene Ton muss wieder volle Lautstaerke haben",
+            1f,
+            SoundKit.humVolumeForTest(SoundKit.Hum.SCAN),
+            0.001f
+        )
+        assertTrue(SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
+        assertFalse(SoundKit.humPlayingForTest(SoundKit.Hum.JOB))
+    }
+
+    @Test
+    fun `abschalten beendet beide dauertoene`() {
+        markLoaded()
+        SoundKit.startScanHum()
+        SoundKit.startJobHum()
+
+        SoundKit.setEnabled(false)
+
+        assertFalse(SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
+        assertFalse(SoundKit.humPlayingForTest(SoundKit.Hum.JOB))
+    }
+
+    @Test
+    fun `lautloser modus unterdrueckt auch den auftragston`() {
+        markLoaded()
+        audio.ringerMode = AudioManager.RINGER_MODE_SILENT
+
+        SoundKit.startJobHum()
+
+        assertTrue(humPlaybacks(R.raw.job_hum).isEmpty())
     }
 
     @Test

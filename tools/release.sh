@@ -13,6 +13,12 @@
 #
 # Voraussetzungen: signierter Keystore (keystore.properties), gh CLI,
 # angemeldet (`gh auth status`).
+#
+# `pipefail` ist Absicht: faellt ein Glied einer Pipeline aus, gilt sie als
+# gescheitert. Deshalb steht nirgends `| head -n`: `head` schliesst die Pipe
+# und der schreibende Prozess stirbt an SIGPIPE (Exit 141) - das Skript
+# bricht dann mitten im Ablauf ab, obwohl nichts kaputt ist. Gekuerzt wird
+# mit `| sed -n '1,3p'`, das alles liest.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -57,7 +63,7 @@ step "Release $TAG (versionCode $VERSION_CODE)"
 
 $(git status --short)"
 
-PREV_TAG=$(git tag --sort=-v:refname | head -1 || true)
+PREV_TAG=$(git tag --sort=-v:refname | sed -n '1p')
 if [ -n "$PREV_TAG" ]; then
     PREV_CODE=$(git show "$PREV_TAG:app/build.gradle.kts" 2>/dev/null |
         sed -n 's/.*versionCode = \([0-9]*\).*/\1/p') || PREV_CODE=""
@@ -106,12 +112,13 @@ APK=app/build/outputs/apk/release/app-release.apk
 [ -f "$APK" ] || fail "Kein Release-APK unter $APK"
 
 BADGING=$("$BT/aapt2" dump badging "$APK")
-echo "$BADGING" | grep -q "versionName='$VERSION_NAME'" ||
-    fail "APK traegt nicht $VERSION_NAME:
-$(echo "$BADGING" | head -1)"
-echo "$BADGING" | head -1
+FIRST_LINE=$(printf '%s\n' "$BADGING" | sed -n '1p')
+echo "$FIRST_LINE"
+printf '%s\n' "$BADGING" | grep -q "versionName='$VERSION_NAME'" ||
+    fail "APK traegt nicht $VERSION_NAME. Erste Zeile:
+$FIRST_LINE"
 
-"$BT/apksigner" verify --print-certs "$APK" | head -3 ||
+"$BT/apksigner" verify --print-certs "$APK" | sed -n '1,3p' ||
     fail "Signaturpruefung gescheitert"
 
 if [ "$DRY_RUN" -eq 1 ]; then
@@ -138,11 +145,24 @@ gh release create "$TAG" "$APK" \
 
 step "Veroeffentlichtes Artefakt zurueckpruefen"
 CHECK=$(mktemp -d)
-rm -rf "$CHECK"/*
+trap 'rm -rf "$CHECK"' EXIT
 gh release download "$TAG" --pattern "*.apk" --dir "$CHECK" --clobber
-"$BT/aapt2" dump badging "$(ls "$CHECK"/*.apk | head -1)" | head -1
-"$BT/apksigner" verify "$(ls "$CHECK"/*.apk | head -1)" &&
-    echo "Signatur der veroeffentlichten Datei: in Ordnung"
-rm -rf "$CHECK"
+PUB=$(ls "$CHECK"/*.apk | sed -n '1p')
+[ -f "$PUB" ] || fail "Keine APK im Release $TAG"
+
+PUB_LINE=$("$BT/aapt2" dump badging "$PUB" | sed -n '1p')
+echo "$PUB_LINE"
+printf '%s\n' "$PUB_LINE" | grep -q "versionName='$VERSION_NAME'" ||
+    fail "Veroeffentlichte APK traegt nicht $VERSION_NAME:
+$PUB_LINE"
+"$BT/apksigner" verify "$PUB" || fail "Signatur der veroeffentlichten Datei ist nicht in Ordnung"
+
+# Die Bytes muessen die sein, die hier gebaut wurden - ein Upload kann
+# eine andere Datei treffen, und `apksigner` merkt das nicht.
+LOCAL_SHA=$(sha256sum "$APK" | awk '{print $1}')
+PUB_SHA=$(sha256sum "$PUB" | awk '{print $1}')
+[ "$LOCAL_SHA" = "$PUB_SHA" ] ||
+    fail "Veroeffentlichte Datei weicht ab: lokal $LOCAL_SHA, im Release $PUB_SHA"
+echo "Signatur und SHA-256 der veroeffentlichten Datei: in Ordnung"
 
 step "Fertig: $TAG mit $TESTS gruenen Tests veroeffentlicht"

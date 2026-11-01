@@ -53,6 +53,11 @@ nach [SemVer](https://semver.org/lang/de/).
   Zusätzlich hängt `assembleRelease` in `app/build.gradle.kts` an
   `testDebugUnitTest`, damit auch ein manueller Bau den Schritt nicht
   überspringen kann.
+- Gekürzt wird im Skript mit `sed -n`, nicht mit `head`: `aapt2 dump
+  badging` schreibt 118 Zeilen, `head -1` schließt die Pipe, und mit
+  `set -o pipefail` bricht das Skript dann an SIGPIPE ab (Exit 141) —
+  mitten nach dem Upload, mit dem Anschein eines Fehlers. Nachgewiesen:
+  `aapt2 … | head -1` → 141, `aapt2 … | sed -n '1p'` → 0.
 
 ### Geprüft
 

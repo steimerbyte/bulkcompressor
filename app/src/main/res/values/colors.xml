@@ -7,6 +7,7 @@
     <color name="nothing_dim">#FF6B6B6B</color>
     <color name="nothing_surface">#FF111111</color>
     <color name="nothing_outline">#FF2A2A2A</color>
+    <color name="nothing_track">#FF383838</color>
     <color name="nothing_accent">#FFFFFFFF</color>
     <!-- Nur fuer den Hinweis, dass Originale ersetzt werden. -->
     <color name="nothing_red">#FFD71921</color>

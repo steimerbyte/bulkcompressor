@@ -78,7 +78,7 @@ weggescrollt — bei einem Ordner mit hunderten Dateien ist er sonst erst
 nach langem Wischen zu erreichen. Das Protokoll liegt zwischen Inhalt und
 Knopf; aufgeklappt schiebt es den Inhalt hoch, statt ihn zu verdecken.
 
-Drei Regeln, die im Layout stecken:
+Vier Regeln, die im Layout stecken:
 
 - **Chip-Reihen brechen um, statt abzuschneiden.** Auf einem 360 dp
   breiten Gerät passten „1440p", „1080p", „720p" und „480p" nicht in eine
@@ -95,6 +95,14 @@ Drei Regeln, die im Layout stecken:
   nicht reagiert, ist eine Falle. Für „Neu scannen" gilt dasselbe: er hat
   eine feste Textfarbe, ein gesperrter Knopf bekäme sonst dieselbe
   Deckkraft wie ein benutzbarer.
+- **Der Regler ist eine Punktreihe, kein Systembalken.** Vierzehn Punkte,
+  gefüllt bis zum Wert, dazu ein senkrechter Griff auf demselben Bruchteil
+  (`NothingSlider`). Der Griff ist zugleich die Antwort auf „wo steht der
+  Wert" — die Punkte muss man nicht zählen. Gezeichnet wird im Regler
+  selbst, nicht über Tints: die Punktreihe liegt in derselben Spanne wie
+  die Tippfläche (die Punkte sind um eine Punktbreite eingerückt, sonst
+  wäre der erste Punkt angeschnitten), also setzt ein Tipp den Griff
+  genau dorthin, wo der Finger war.
 - **Animation, die man abschalten kann.** Die Punktmatrix beim Scannen
   zeichnet im Ruhezustand gar nichts und behält nur ihren Platz, damit
   nichts springt. Ist im System „Animationen entfernen" gewählt, steht das
@@ -371,17 +379,23 @@ eigenen Code.
 * **Abbruch** wirkt zwischen zwei Dateien und mitten im Video (der
   laufende Transcode wird beendet, die Zieldatei ist eine
   Cache-Temp-Datei und wird verworfen — das Original bleibt intakt).
-* **Klickgeräusche:** `SoundPool` mit drei kurzen WAV-Dateien (4–9 KB),
+* **Klickgeräusche:** `SoundPool` mit fünf kurzen WAV-Dateien (4–16 KB),
   erzeugt von `tools/generate_click_sounds.py` — heller Klick für Chips,
   Liste und Werkzeugleiste, tieferer für Schalter, größerer für
-  START. Beim Ziehen eines Sliders klickt jeder geänderte Schritt,
-  gedrosselt auf 25 pro Sekunde (`MIN_GAP_MS`), damit es nicht knattert.
+  START, dazu zwei Töne für den Ordner-Scan: ein Doppelschlag mit
+  steigender Tonhöhe (860 → 1290 Hz, gemessen) beim Beginn und ein
+  einzelner tieferer Schlag (550 Hz) beim Ende. Kein Piep — dieselbe
+  Holzfamilie wie die Klicks, nur als Ablauf. Beim Ziehen eines Sliders
+  klickt jeder geänderte Schritt, gedrosselt auf 25 pro Sekunde
+  (`MIN_GAP_MS`), damit es nicht knattert.
   Abschaltbar über die Zeile **KLICKGERÄUSCHE**; zusätzlich schweigt die
   App im Lautlos- und Vibrationsmodus und bei Systemlautstärke 0. Die
   Systemeinstellung „Berührungsklänge" schaltet hier **nicht** ab — sie
   ist auf vielen Geräten ab Werk aus, und dann stand der Schalter in der
   App sichtbar auf an, ohne dass ein Ton kam. Welche der drei Regeln
   gerade greift, steht im Protokoll (`Sound`, eine Zeile je Wechsel).
+  Die beiden Scan-Töne folgen demselben Schalter: wer die Klicks
+  abschaltet, hört auch den Scan nicht.
 * **Speicherwächter** (`MemoryGuard`): bewusst *eine* Datei nach der
   anderen, kein paralleles Kodieren — der Speicherbedarf bleibt konstant.
   Die Einordnung ist eine reine Funktion und damit ohne Gerät geprüft.
@@ -418,11 +432,16 @@ Auf einem echten Gerät wurde diese Fassung noch nicht ausgeführt — siehe
 * **HDR-Videos** werden auf 8 Bit gebracht; die HDR-Metadaten
   (`colr`/`mdcv`) überleben das Umkodieren nicht. Aus HDR10 wird SDR
   mit derselben Auflösung.
+* **Die Töne sind gemessen, nicht gehört.** Tonhöhe, Pegel und Ablauf
+  der fünf Klick-Dateien stehen als Zahl fest (860 → 1290 Hz für den
+  Scan-Anlauf, 550 Hz für das Ende, Spitze 0,85), und ein Test prüft,
+  dass jeder Ton wirklich bei `SoundPool` ankommt. Ob sie auf einem
+  Telefonlautsprecher gut klingen, entscheidet das Ohr am Gerät.
 * **Kein Bild-Auflösungs-Limit**, nur Qualität — ein 48-MP-Foto bleibt
   48 MP groß, nur mit weniger Byte pro Pixel.
 * **Die Speicherbremse ist auf einem Gerät nicht erprobt.** Schwellen
   (72 %/85 %), Systemmeldungen und die Wartezeiten sind ohne Hardware
-  geprüft (reine Einordnung, Journal, Rückfallebene — 150 JVM-Tests), das
+  geprüft (reine Einordnung, Journal, Rückfallebene — 156 JVM-Tests), das
   Zusammenspiel mit echten Encodern nicht.
 * **Ordner ohne Verzeichnis-Typ** erkennt der Scan am Kind-Abruf (ein
   Anbieter, der Ordner als `inode/directory`, `resource/folder` oder ganz

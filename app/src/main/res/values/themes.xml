@@ -12,13 +12,6 @@
         <item name="android:navigationBarColor">@color/nothing_black</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:textColorHint">@color/nothing_dim</item>
-        <item name="android:seekBarStyle">@style/SeekBar.BulkCompressor</item>
-    </style>
-
-    <style name="SeekBar.BulkCompressor" parent="Widget.AppCompat.SeekBar">
-        <item name="android:progressTint">@color/nothing_white</item>
-        <item name="android:progressBackgroundTint">@color/nothing_outline</item>
-        <item name="android:thumbTint">@color/nothing_white</item>
     </style>
 
 

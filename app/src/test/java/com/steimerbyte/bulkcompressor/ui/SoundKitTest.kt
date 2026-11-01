@@ -61,6 +61,11 @@ class SoundKitTest {
         return Shadow.extract<ShadowSoundPool>(pool).wasResourcePlayed(R.raw.click_tick)
     }
 
+    private fun playedResource(id: Int): Boolean {
+        val pool = SoundKit.poolForTest() ?: return false
+        return Shadow.extract<ShadowSoundPool>(pool).wasResourcePlayed(id)
+    }
+
     private fun tickPlaybacks(): Int {
         val pool = SoundKit.poolForTest() ?: return 0
         return Shadow.extract<ShadowSoundPool>(pool).getResourcePlaybacks(R.raw.click_tick).size
@@ -92,6 +97,35 @@ class SoundKitTest {
         SoundKit.play(SoundKit.Click.TICK)
 
         assertTrue("Der Klick muss an SoundPool.play gehen", playedTick())
+    }
+
+    @Test
+    fun `scan beginn und ende erreichen das audiosystem`() {
+        assertNotNull("SoundPool muss aufgebaut sein", SoundKit.poolForTest())
+
+        SoundKit.play(SoundKit.Click.SCAN_START)
+        SoundKit.play(SoundKit.Click.SCAN_DONE)
+
+        assertTrue(
+            "Der Anlauf-Ton muss als scan_start an SoundPool gehen - eine " +
+                "nicht geladene Datei faellt hier auf, nicht erst auf dem Geraet",
+            playedResource(R.raw.scan_start)
+        )
+        assertTrue(
+            "Der Abschluss-Ton muss als scan_done an SoundPool gehen",
+            playedResource(R.raw.scan_done)
+        )
+    }
+
+    @Test
+    fun `scan toene folgen dem schalter der klickgeraeusche`() {
+        // Ein zweiter Schalter fuer denselben Ton waere eine Falle: wer die
+        // Klicks abschaltet, will auch den Scan nicht hoeren.
+        SoundKit.setEnabled(false)
+
+        SoundKit.play(SoundKit.Click.SCAN_START)
+
+        assertFalse("Aus bleibt aus", playedResource(R.raw.scan_start))
     }
 
     @Test

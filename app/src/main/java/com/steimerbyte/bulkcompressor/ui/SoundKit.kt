@@ -12,10 +12,12 @@ import com.steimerbyte.bulkcompressor.log.Log
 /**
  * Klickgeraeusche fuer Beruehrungen.
  *
- * Die App liefert drei kurze, synthetisch erzeugte Holz-Klicks mit
+ * Die App liefert fuenf kurze, synthetisch erzeugte Holz-Klicks mit
  * (`tools/generate_click_sounds.py`): einen hellen fuer Chips und kleine
  * Knoepfe, einen tieferen fuer Schalter, einen groesseren fuer den
- * Startknopf.
+ * Startknopf, einen Zweifach-Schlag mit steigender Tonhoehe fuer den
+ * Beginn eines Ordner-Scans und einen tiefen Einzelschlag fuer dessen
+ * Ende.
  *
  * [SoundPool] statt [android.media.MediaPlayer]: die Dateien sind beim
  * ersten Tippen schon dekodiert, es gibt keine Startlatenz und kein
@@ -33,8 +35,16 @@ import com.steimerbyte.bulkcompressor.log.Log
  */
 object SoundKit {
 
-    /** Was geklickt hat. Bestimmt die Datei und den Mindestabstand. */
-    enum class Click { TICK, TOGGLE, THUNK }
+    /**
+     * Was geklickt hat. Bestimmt die Datei und den Mindestabstand.
+     *
+     * `SCAN_START` und `SCAN_DONE` gehoeren zur selben Familie wie die
+     * Klicks: derselbe Holz-Anschlag, nur als Zweifach-Schlag mit
+     * steigender Tonhoehe ("jetzt geht es los") und als einzelner tiefer
+     * Schlag ("Ordner gelesen"). Kein Piep - ein Zustand, den man hoert,
+     * ohne hinzusehen.
+     */
+    enum class Click { TICK, TOGGLE, THUNK, SCAN_START, SCAN_DONE }
 
     private const val MAX_STREAMS = 4
 
@@ -54,6 +64,7 @@ object SoundKit {
      * Klick zu erkennen.
      */
     private const val MIN_GAP_MS = 40L
+
 
     private var pool: SoundPool? = null
     private val streamIds = HashMap<Click, Int>()
@@ -103,6 +114,8 @@ object SoundKit {
         streamIds[Click.TICK] = created.load(context, R.raw.click_tick, 1)
         streamIds[Click.TOGGLE] = created.load(context, R.raw.click_toggle, 1)
         streamIds[Click.THUNK] = created.load(context, R.raw.click_thunk, 1)
+        streamIds[Click.SCAN_START] = created.load(context, R.raw.scan_start, 1)
+        streamIds[Click.SCAN_DONE] = created.load(context, R.raw.scan_done, 1)
         pool = created
         Log.i(TAG, describe(context))
     }

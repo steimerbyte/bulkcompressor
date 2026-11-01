@@ -765,6 +765,11 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     private fun startScan(uri: Uri) {
         scanBeacon.start()
+        // Der Ton haengt am Vorgang, nicht am Knopf: auch der Start aus
+        // dem wiederhergestellten Ordner klingt so - der Scan beginnt ja
+        // wirklich. Abgeschaltet wird er ueber denselben Schalter wie
+        // die Klicks (SoundKit).
+        SoundKit.play(SoundKit.Click.SCAN_START)
         scanning = true
         updateRescanButton()
         textFolder.text = FolderPath.display(uri)
@@ -830,6 +835,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     private fun applyScan(result: ScanResult) {
         scanBeacon.stop()
+        SoundKit.play(SoundKit.Click.SCAN_DONE)
         scanning = false
         updateRescanButton()
         scanResult = result

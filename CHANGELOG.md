@@ -4,6 +4,35 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.7.4] – 2026-11-01
+
+### Neu
+
+- **Der Regler ist eine Punktreihe statt eines Systembalkens.** Vierzehn
+  Punkte, gefüllt bis zum Wert, dazu ein senkrechter Griff auf demselben
+  Bruchteil. Der alte Balken war ein dünner Strich mit rundem Knopf — mit
+  den Farben des Themes blieb davon ein weißer Strich auf Schwarz übrig,
+  also die Formensprache jeder zweiten Android-App. Die Punktreihe ist
+  dieselbe Sprache wie die Ladeanzeige und die Abschnittsmarken.
+  Gezeichnet wird im Regler selbst (`NothingSlider`), die Tippfläche
+  bleibt die des `SeekBar`: ein Tipp setzt den Griff genau dorthin, wo
+  der Finger war. Punkte und Griff sind um eine Punktbreite eingerückt —
+  ohne das wäre der erste Punkt angeschnitten gewesen und der Griff bei
+  0 % zur Hälfte außerhalb.
+- **Zwei Töne für den Ordner-Scan.** Beim Beginn ein Doppelschlag mit
+  steigender Tonhöhe (860 → 1290 Hz), beim Ende ein einzelner tieferer
+  Schlag (550 Hz) — dieselbe Holz-Familie wie die Klickgeräusche, kein
+  Piep. Sie kommen aus demselben Generator (`tools/generate_click_sounds.py`)
+  wie die drei Klicks und folgen demselben Schalter **KLICKGERÄUSCHE**;
+  ein eigenes Konto gibt es nicht.
+
+### Behoben
+
+- **Der gesperrte Bitrate-Regler war nicht mehr ablesbar.** Zwei
+  Abschwächungen lagen übereinander (35 % Deckkraft des Abschnitts plus
+  eine zweite am Regler selbst) und halbierten den Unterschied zwischen
+  gefüllten und leeren Punkten. Jetzt schwächt nur noch der Abschnitt ab.
+
 ## [1.7.3] – 2026-11-01
 
 ### Neu

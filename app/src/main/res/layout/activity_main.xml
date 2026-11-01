@@ -354,14 +354,12 @@
                             android:text="60 %" />
                     </LinearLayout>
 
-                    <SeekBar
+                    <com.steimerbyte.bulkcompressor.ui.NothingSlider
                         android:id="@+id/seek_bitrate"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
                         android:max="95"
-                        android:paddingStart="0dp"
-                        android:paddingEnd="0dp"
                         android:progress="55" />
                 </LinearLayout>
 
@@ -472,14 +470,12 @@
                         android:text="80" />
                 </LinearLayout>
 
-                <SeekBar
+                <com.steimerbyte.bulkcompressor.ui.NothingSlider
                     android:id="@+id/seek_quality"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
                     android:max="55"
-                    android:paddingStart="0dp"
-                    android:paddingEnd="0dp"
                     android:progress="40" />
 
                 <TextView

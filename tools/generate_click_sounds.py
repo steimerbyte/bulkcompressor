@@ -60,6 +60,25 @@ def click(duration, partials, noise_amp, noise_ms, bend=0.06):
     return out
 
 
+def overlapping(parts, total_s):
+    """Mehrere Anschlaege in eine Spur legen.
+
+    parts: Liste von (offset_ms, samples). Die Spur ist total_s lang; was
+    ueber das Ende hinausragt, faellt weg. Damit laesst sich ein
+    Zweifach-Anschlag bauen - derselbe Holzklick, nur zwei Mal kurz
+    hintereinander, statt eines neuen Klangs.
+    """
+    out = [0.0] * int(RATE * total_s)
+    for offset_ms, samples in parts:
+        start = int(RATE * offset_ms / 1000.0)
+        for i, x in enumerate(samples):
+            target = start + i
+            if target >= len(out):
+                break
+            out[target] += x
+    return out
+
+
 def normalize(samples, peak=0.89, fade_ms=0.4):
     """Ein- und Ausblenden, dann auf die Spitze normieren.
 
@@ -113,6 +132,32 @@ def main():
               partials=[(720.0, 1.0, 0.016), (1440.0, 0.45, 0.009),
                         (300.0, 0.35, 0.030), (2100.0, 0.20, 0.005)],
               noise_amp=0.40, noise_ms=1.6)))
+
+    # Scan beginnt: zwei Anschlaege derselben Familie, der zweite eine
+    # Quinte hoeher und gleich laut. Der Anstieg ist die Aussage "jetzt
+    # geht es los" - kein neuer Klang, nur eine Richtung.
+    anlauf_a = click(0.070,
+                     partials=[(880.0, 1.0, 0.011), (1760.0, 0.38, 0.006),
+                               (440.0, 0.28, 0.018)],
+                     noise_amp=0.45, noise_ms=1.3)
+    anlauf_b = click(0.070,
+                     partials=[(1320.0, 1.0, 0.010), (2640.0, 0.34, 0.006),
+                               (660.0, 0.26, 0.016)],
+                     noise_amp=0.40, noise_ms=1.2)
+    write_wav(os.path.join(OUT, "scan_start.wav"),
+              normalize(overlapping(
+                  [(0.0, [x * 1.15 for x in anlauf_a]), (72.0, anlauf_b)],
+                  0.18),
+                        peak=0.85))
+
+    # Scan fertig: ein einzelner Anschlag, tiefer als der Start und ohne
+    # zweiten Schlag - das Ohr hoert "zu Ende", nicht "neu".
+    write_wav(os.path.join(OUT, "scan_done.wav"), normalize(
+        click(0.150,
+              partials=[(560.0, 1.0, 0.022), (1120.0, 0.36, 0.011),
+                        (840.0, 0.22, 0.014)],
+              noise_amp=0.34, noise_ms=1.4),
+        peak=0.85))
 
 
 if __name__ == "__main__":

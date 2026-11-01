@@ -11,6 +11,10 @@ Menue-Klicks in Minecraft -- sehr kurzer Rausch-Transient plus zwei
 schnell abklingende Partialtoene mit leichtem Tonhoehen-Fall (das macht
 den "Koerper"-Eindruck statt "Beep").
 
+Dazu ein Dauerton fuer die Dauer des Scans: kein Klick, sondern ein
+leises Summen, das laeuft, solange gelesen wird. Er ist so gebaut, dass
+die Schleife nahtlos ist (siehe [scan_hum]).
+
 Aufruf: python3 tools/generate_click_sounds.py
 """
 import math
@@ -100,6 +104,60 @@ def normalize(samples, peak=0.89, fade_ms=0.4):
     return [x / hi * peak for x in faded]
 
 
+def scan_hum(duration_s=2.0):
+    """Dauerton fuer die Dauer des Scans - absichtlich nahtlos.
+
+    Damit eine Schleife nicht klickt, muss die letzte Probe exakt an die
+    erste anschliessen. Das geht hier ohne jede Blende, weil **alle**
+    Teiltoene ganzzahlige Vielfache von 1/duration sind: bei 2 s also
+    Vielfache von 0,5 Hz. 110 Hz sind 220 Perioden, 110,5 Hz sind 221 -
+    die Schwebung von 0,5 Hz ist damit Teil der Schleife und nicht ihr
+    Ende. Auch die Huellkurven (0,5 Hz und 3 Hz) gehen ganzzahlig auf.
+
+    Ein Sinus-Piep waere billig, klingt aber nach Messtechnik; das
+    Klangbild hier ist ein leises Summen mit langsamem Atmen und einem
+    feinen Schimmer darueber - eine Maschine, die arbeitet.
+
+    Kein Ein- und Ausblenden: [normalize] blendet an beiden Enden, und
+    genau das wuerde die Naht zerstueckeln. Deshalb skaliert
+    [normalize_loop] nur.
+    """
+    total = int(RATE * duration_s)
+    partials = [
+        (110.0, 0.50),   # Grundton A2
+        (110.5, 0.30),   # 0,5 Hz daneben -> Schwebung
+        (165.0, 0.18),   # Quinte
+        (220.0, 0.12),   # Oktave
+        (330.0, 0.06),
+    ]
+    out = []
+    for i in range(total):
+        t = i / RATE
+        v = 0.0
+        for freq, amp in partials:
+            v += amp * math.sin(2.0 * math.pi * freq * t)
+        # Atmen: eine Periode je Schleife.
+        v *= 0.75 + 0.25 * math.cos(2.0 * math.pi * 0.5 * t)
+        # Schimmer, damit es nicht nach Netzbrummen klingt.
+        v += 0.030 * math.sin(2.0 * math.pi * 1320.0 * t) * (
+            0.5 + 0.5 * math.sin(2.0 * math.pi * 3.0 * t))
+        out.append(v)
+    return out
+
+
+def normalize_loop(samples, rms=0.035):
+    """Nur skalieren, nicht blenden - der Ton ist eine Schleife.
+
+    Pegel ueber den Effektivwert statt ueber die Spitze: bei einem Ton,
+    der eine Minute lang laeuft, bestimmt der Effektivwert die
+    wahrgenommene Lautstaerke. Die Klicks sind auf ihre Spitze normiert
+    (0,85-0,89); ein Dauerton mit demselben Effektivwert waere um
+    Groessenordnungen lauter, weil er nicht nach 50 ms aufhoert.
+    """
+    current = math.sqrt(sum(x * x for x in samples) / max(1, len(samples)))
+    return [x / max(1e-9, current) * rms for x in samples]
+
+
 def write_wav(path, samples):
     with wave.open(path, "wb") as f:
         f.setnchannels(1)
@@ -158,6 +216,17 @@ def main():
                         (840.0, 0.22, 0.014)],
               noise_amp=0.34, noise_ms=1.4),
         peak=0.85))
+
+    # Dauer des Scans: laeuft, solange gelesen wird, und endet mit dem
+    # Lesevorgang. Effektivwert 0,035 (-29 dBFS) - hoerbar, aber deutlich
+    # unter den Klicks; er soll Zustand melden, nicht beschallen.
+    hum = normalize_loop(scan_hum(2.0), rms=0.035)
+    write_wav(os.path.join(OUT, "scan_hum.wav"), hum)
+    peak = max(abs(x) for x in hum)
+    seam = abs(hum[0] - hum[-1])
+    step = max(abs(hum[i + 1] - hum[i]) for i in range(len(hum) - 1))
+    print(f"scan_hum: Spitze {peak:.3f} · Naht {seam:.5f} "
+          f"(groesster Sprung im Ton {step:.5f})")
 
 
 if __name__ == "__main__":

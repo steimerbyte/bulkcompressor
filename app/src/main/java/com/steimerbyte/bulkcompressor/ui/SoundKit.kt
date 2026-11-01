@@ -4,6 +4,8 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.SoundPool
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import com.steimerbyte.bulkcompressor.R
@@ -17,7 +19,11 @@ import com.steimerbyte.bulkcompressor.log.Log
  * Knoepfe, einen tieferen fuer Schalter, einen groesseren fuer den
  * Startknopf, einen Zweifach-Schlag mit steigender Tonhoehe fuer den
  * Beginn eines Ordner-Scans und einen tiefen Einzelschlag fuer dessen
- * Ende.
+ * Ende. Dazu ein **Dauerton**, der so lange laeuft wie der Scan selbst:
+ * ein leises Summen, das beginnt, wenn der Ordner gelesen wird, und
+ * endet, wenn er gelesen ist. Die Klicks markieren Anfang und Ende, das
+ * Summen sagt "es passiert gerade etwas" - man hoert es auch, wenn man
+ * das Telefon in der Hand haelt und nicht hinsieht.
  *
  * [SoundPool] statt [android.media.MediaPlayer]: die Dateien sind beim
  * ersten Tippen schon dekodiert, es gibt keine Startlatenz und kein
@@ -65,6 +71,24 @@ object SoundKit {
      */
     private const val MIN_GAP_MS = 40L
 
+    /**
+     * Der Dauerton ist auf einen Effektivwert von 0,035 normiert (-29
+     * dBFS), nicht auf eine Spitze wie die Klicks. Ein Ton, der eine
+     * Minute laeuft, wird nach dem Effektivwert beurteilt; mit dem
+     * Spitzenpegel der Klicks waere er unertraeglich. Deshalb bleibt es
+     * bei voller Lautstaerke hier - die Hoer-Lautstaerke macht der
+     * Systemton-Regler.
+     */
+    private const val HUM_VOLUME = 1.0f
+
+    /**
+     * Ausblendzeit beim Ende des Scans. Ein tiefer Ton, der mitten in der
+     * Schwingung abgeschnitten wird, knallt; 200 ms reichen, um das zu
+     * vermeiden, ohne das Ende zu verschleppen.
+     */
+    private const val HUM_FADE_MS = 40L
+    private const val HUM_FADE_STEPS = 5
+
 
     private var pool: SoundPool? = null
     private val streamIds = HashMap<Click, Int>()
@@ -79,6 +103,19 @@ object SoundKit {
     /** Noch nicht dekodierte Klicks: sie werden nach dem Laden nachgeholt. */
     private val loaded = HashSet<Int>()
     private val pending = HashMap<Click, Int>()
+
+    /** Die Dauerton-Datei; eigener Kanal, weil sie schleift statt zu klicken. */
+    private var humResId = 0
+
+    /** Laufender Schleifen-Strom, 0 = keiner. */
+    private var humStream = 0
+
+    /** Der Scan laeuft, die Datei war aber noch nicht dekodiert. */
+    private var humWanted = false
+
+    /** Ausblendung laeuft ueber den Main-Looper; ein Handler, ein Lauf. */
+    private var fadeHandler: Handler? = null
+    private var fadeRunnable: Runnable? = null
 
     /**
      * Einmal nach dem Aufbau der Oberflaeche aufrufen. Der zweite Aufruf
@@ -103,6 +140,13 @@ object SoundKit {
                 return@setOnLoadCompleteListener
             }
             loaded.add(sampleId)
+            // Der Scan kann begonnen haben, bevor der Dauerton dekodiert
+            // war (App-Start mit wiederhergestelltem Ordner). Dann laeuft
+            // er jetzt an - sonst bliebe der Scan tonlos.
+            if (humWanted && sampleId == humResId) {
+                humWanted = false
+                playHum()
+            }
             // Der erste Tipp nach dem Start kam womoeglich, bevor die Datei
             // dekodiert war - er wird jetzt nachgeholt.
             val waiting = pending.entries.firstOrNull { streamIds[it.key] == sampleId }
@@ -116,6 +160,7 @@ object SoundKit {
         streamIds[Click.THUNK] = created.load(context, R.raw.click_thunk, 1)
         streamIds[Click.SCAN_START] = created.load(context, R.raw.scan_start, 1)
         streamIds[Click.SCAN_DONE] = created.load(context, R.raw.scan_done, 1)
+        humResId = created.load(context, R.raw.scan_hum, 1)
         pool = created
         Log.i(TAG, describe(context))
     }
@@ -123,6 +168,9 @@ object SoundKit {
     fun setEnabled(enabled: Boolean) {
         appEnabled = enabled
         lastReason = null
+        // Wer den Ton mitten im Scan abschaltet, will ihn sofort nicht
+        // mehr hoeren - nicht erst beim naechsten Vorgang.
+        if (!enabled) stopScanHum()
     }
 
     /**
@@ -137,15 +185,11 @@ object SoundKit {
         lastReason = null
     }
 
-    fun play(click: Click) {
-        // Die Bremse zuerst: sonst kostet jeder einzelne Reglerschritt eine
-        // Abfrage beim AudioService (Binder), obwohl danach neun von zehn
-        // Aufrufen ohnehin verworfen werden.
-        val now = SystemClock.uptimeMillis()
-        lastPlayedAt[click]?.let { last ->
-            if (now - last < MIN_GAP_MS) return
-        }
-
+    /**
+     * Darf jetzt Ton kommen? Ein Ort fuer die Regel, damit Klick und
+     * Dauerton nicht auseinanderlaufen.
+     */
+    private fun mayPlay(): Boolean {
         val manager = audio
         val decision = SoundPolicy.decide(
             appEnabled = appEnabled,
@@ -156,9 +200,22 @@ object SoundKit {
         )
         if (!decision.play) {
             logReasonOnce(decision.reason)
-            return
+            return false
         }
         logReasonOnce(SoundPolicy.Reason.ALLOWED)
+        return true
+    }
+
+    fun play(click: Click) {
+        // Die Bremse zuerst: sonst kostet jeder einzelne Reglerschritt eine
+        // Abfrage beim AudioService (Binder), obwohl danach neun von zehn
+        // Aufrufen ohnehin verworfen werden.
+        val now = SystemClock.uptimeMillis()
+        lastPlayedAt[click]?.let { last ->
+            if (now - last < MIN_GAP_MS) return
+        }
+
+        if (!mayPlay()) return
 
         // Achtung: hier stand einmal `?: Long.MIN_VALUE`. `now - Long.MIN_VALUE`
         // laeuft im Long-Bereich ueber und wird negativ - die Bedingung war
@@ -173,6 +230,74 @@ object SoundKit {
         // nach dem Laden nachgeholt, statt den Tipp zu verschlucken.
         if (id !in loaded) pending[click] = id
         soundPool.play(id, VOLUME, VOLUME, 1, 0, 1f)
+    }
+
+    /**
+     * Beginn des Ordner-Scans: der Dauerton laeuft ab jetzt, bis
+     * [stopScanHum] ihn beendet.
+     *
+     * Laeuft er schon, bleibt er stehen - ein zweiter Strom derselben
+     * Schleife waere doppelt so laut und liesse sich nicht mehr sauber
+     * beenden.
+     */
+    fun startScanHum() {
+        if (humStream != 0 || humWanted) return
+        if (!mayPlay()) return
+        val id = humResId
+        if (id == 0) return
+        // Noch nicht dekodiert: vormerken und im Lade-Callback anlaufen
+        // lassen. Sonst bliebe der Scan stumm, wenn er kurz nach dem
+        // App-Start losgeht.
+        if (id !in loaded) {
+            humWanted = true
+            return
+        }
+        playHum()
+    }
+
+    /** Laeuft die Schleife an. Nur von [startScanHum] und dem Lade-Callback. */
+    private fun playHum() {
+        val soundPool = pool ?: return
+        val id = humResId
+        if (id == 0 || id !in loaded || humStream != 0) return
+        // loop = -1: endlos, bis stop() kommt. Die Datei ist eine
+        // nahtlose Schleife (siehe tools/generate_click_sounds.py), damit
+        // an der Naht kein Knacken entsteht.
+        humStream = soundPool.play(id, HUM_VOLUME, HUM_VOLUME, 1, -1, 1f)
+    }
+
+    /**
+     * Ende des Ordner-Scans: der Dauerton wird ausgeblendet und dann
+     * angehalten.
+     *
+     * Der Strom wird sofort als beendet verbucht, damit ein neuer Start
+     * waehrend der 200 ms nicht uebersehen wird. Die Ausblendung laeuft
+     * ueber den Main-Looper; ein zweiter Aufruf waehrenddessen ist
+     * folgenlos.
+     */
+    fun stopScanHum() {
+        humWanted = false
+        val stream = humStream
+        if (stream == 0) return
+        humStream = 0
+        val soundPool = pool ?: return
+        val handler = fadeHandler ?: Handler(Looper.getMainLooper()).also { fadeHandler = it }
+        var step = 0
+        val runnable = object : Runnable {
+            override fun run() {
+                step++
+                if (step >= HUM_FADE_STEPS) {
+                    runCatching { soundPool.stop(stream) }
+                    fadeRunnable = null
+                    return
+                }
+                val volume = HUM_VOLUME * (1f - step.toFloat() / HUM_FADE_STEPS)
+                runCatching { soundPool.setVolume(stream, volume, volume) }
+                handler.postDelayed(this, HUM_FADE_MS)
+            }
+        }
+        fadeRunnable = runnable
+        handler.postDelayed(runnable, HUM_FADE_MS)
     }
 
     private fun logReasonOnce(reason: SoundPolicy.Reason) {
@@ -216,9 +341,21 @@ object SoundKit {
     /** Nur fuer Tests: das AudioManager-Objekt, aus dem die Regel liest. */
     internal fun audioForTest(): AudioManager? = audio
 
+    /** Nur fuer Tests: laeuft gerade ein Schleifen-Strom? */
+    internal fun humPlayingForTest(): Boolean = humStream != 0
+
+    /** Nur fuer Tests: wartet der Ton auf die Dekodierung? */
+    internal fun humWantedForTest(): Boolean = humWanted
+
 
     /** Gibt die dekodierten Puffer frei; nur fuer den Prozessabbau. */
     fun release() {
+        // Erst die Ausblendung abbrechen: sie wuerde sonst auf einen
+        // freigegebenen Pool zugreifen.
+        fadeRunnable?.let { fadeHandler?.removeCallbacks(it) }
+        fadeRunnable = null
+        humStream = 0
+        humWanted = false
         pool?.release()
         pool = null
         streamIds.clear()

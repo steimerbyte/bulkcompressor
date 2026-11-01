@@ -4,6 +4,40 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.7.6] – 2026-11-01
+
+### Neu
+
+- **Der Scan summt, solange er läuft.** Bisher meldeten nur zwei Klicks
+  Anfang und Ende eines Ordner-Scans — dazwischen war es still, und bei
+  einem großen Baum (DCIM mit Unterordnern) wusste man nicht, ob die App
+  noch liest oder schon fertig ist. Jetzt liegt unter den Klicks ein
+  leiser Dauerton: A2 mit 110,5 Hz daneben (0,5 Hz Schwebung), Quinte,
+  Oktave und ein feiner Schimmer — ein Summen, kein Signalton. Er beginnt
+  mit dem Lesevorgang und wird bei seinem Ende über 200 ms ausgeblendet.
+
+  Die Datei ist eine **nahtlose Schleife** und keine abgespielte
+  2-Sekunden-Datei mit Blende: alle Teiltöne und Hüllkurven sind
+  ganzzahlige Vielfache von 0,5 Hz, deshalb schließt die letzte Probe
+  exakt an die erste an. Gemessen an der Datei: der Sprung an der Naht
+  (79/32768) ist kleiner als der größte Sprung innerhalb des Tons (87) —
+  umgekehrt knackt es bei jedem Umlauf. Ein Test hält das fest, samt
+  Prüfung, dass an den Enden nichts ausgeblendet ist.
+
+  Pegel über den Effektivwert (-29 dBFS) statt über die Spitze: ein Ton,
+  der eine Minute läuft, wird nach dem Effektivwert beurteilt. Mit dem
+  Spitzenpegel der Klicks wäre er unerträglich laut. Er folgt demselben
+  Schalter und denselben Regeln wie die Klicks (Lautlos-Modus, Systemlautstärke
+  0), läuft nur einmal (ein zweiter Strom derselben Schleife wäre doppelt
+  so laut) und endet auf jedem Weg: Erfolg, Fehler, Abbruch, geschlossene
+  Activity — ein hängender Dauerton wäre der schlimmste Fehler am Ton.
+
+### Behoben
+
+- **Das Release-Asset heißt wieder einheitlich `BulkCompressor-<Version>.apk`.**
+  1.7.5 lag als `app-release-1.7.5.apk` neben `BulkCompressor-1.7.3/4.apk`;
+  wer nach Datum greift, landet bei der falschen Datei. Bytes unverändert.
+
 ## [1.7.5] – 2026-11-01
 
 ### Geändert

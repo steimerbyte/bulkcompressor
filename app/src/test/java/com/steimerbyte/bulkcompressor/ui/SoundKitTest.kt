@@ -2,6 +2,7 @@ package com.steimerbyte.bulkcompressor.ui
 
 import android.content.Context
 import android.media.AudioManager
+import android.os.Looper
 import android.provider.Settings
 import com.steimerbyte.bulkcompressor.R
 import com.steimerbyte.bulkcompressor.model.CompressSettings
@@ -16,6 +17,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.shadow.api.Shadow
 import org.robolectric.shadows.ShadowSoundPool
 
@@ -70,6 +72,46 @@ class SoundKitTest {
         val pool = SoundKit.poolForTest() ?: return 0
         return Shadow.extract<ShadowSoundPool>(pool).getResourcePlaybacks(R.raw.click_tick).size
     }
+
+    /** Meldet dem Pool, dass die Dateien dekodiert sind - erst dann schleift der Ton. */
+    private fun markLoaded() {
+        val pool = requireNotNull(SoundKit.poolForTest())
+        val shadow = Shadow.extract<ShadowSoundPool>(pool)
+        allRawIds.forEach { shadow.notifyResourceLoaded(it, true) }
+    }
+
+    private fun humPlaybacks(): List<ShadowSoundPool.Playback> {
+        val pool = requireNotNull(SoundKit.poolForTest())
+        return Shadow.extract<ShadowSoundPool>(pool).getResourcePlaybacks(R.raw.scan_hum)
+    }
+
+    /** PCM-Proben einer WAV-Datei aus res/raw, ohne Fremdbibliothek. */
+    private fun pcm(id: Int): ShortArray {
+        val bytes = context.resources.openRawResource(id).use { it.readBytes() }
+        var offset = 12
+        while (offset + 8 <= bytes.size) {
+            val chunk = String(bytes, offset, 4, Charsets.US_ASCII)
+            val size = (bytes[offset + 4].toInt() and 0xFF) or
+                ((bytes[offset + 5].toInt() and 0xFF) shl 8) or
+                ((bytes[offset + 6].toInt() and 0xFF) shl 16) or
+                ((bytes[offset + 7].toInt() and 0xFF) shl 24)
+            if (chunk == "data") {
+                val count = size / 2
+                return ShortArray(count) { index ->
+                    val base = offset + 8 + 2 * index
+                    (((bytes[base + 1].toInt() and 0xFF) shl 8) or
+                        (bytes[base].toInt() and 0xFF)).toShort()
+                }
+            }
+            offset += 8 + size + (size and 1)
+        }
+        throw AssertionError("Kein data-Chunk in Ressource $id")
+    }
+
+    private val allRawIds = listOf(
+        R.raw.click_tick, R.raw.click_toggle, R.raw.click_thunk,
+        R.raw.scan_start, R.raw.scan_done, R.raw.scan_hum
+    )
 
     @Before
     fun setUp() {
@@ -209,6 +251,150 @@ class SoundKitTest {
                 ((bytes[27].toInt() and 0xFF) shl 24)
             assertEquals("Abtastrate von $id", 44100, rate)
         }
+    }
+
+    @Test
+    fun `dauerton laeuft als endlose schleife`() {
+        markLoaded()
+
+        SoundKit.startScanHum()
+
+        val played = humPlaybacks()
+        assertEquals("Der Dauerton muss genau einmal anlaufen", 1, played.size)
+        assertEquals(
+            "Der Dauerton muss schleifen (loop -1), sonst waere er nach 2 s wieder aus",
+            -1,
+            played.first().loop
+        )
+        assertTrue("Der Strom muss als laufend verbucht sein", SoundKit.humPlayingForTest())
+    }
+
+    @Test
+    fun `dauerton startet nicht doppelt`() {
+        markLoaded()
+
+        SoundKit.startScanHum()
+        SoundKit.startScanHum()
+
+        assertEquals(
+            "Ein zweiter Strom derselben Schleife waere doppelt so laut und liesse sich nicht sauber beenden",
+            1,
+            humPlaybacks().size
+        )
+    }
+
+    @Test
+    fun `dauerton endet mit dem stopp und laesst sich neu starten`() {
+        markLoaded()
+        SoundKit.startScanHum()
+
+        SoundKit.stopScanHum()
+        assertFalse("Nach dem Ende des Scans darf kein Strom laufen", SoundKit.humPlayingForTest())
+
+        // Ausblendung auslaufen lassen: sie darf weder krachen noch den
+        // Zustand verfaelschen.
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(400))
+        assertEquals("Die Ausblendung darf den Strom nicht neu starten", 1, humPlaybacks().size)
+        assertFalse(SoundKit.humPlayingForTest())
+
+        SoundKit.startScanHum()
+        assertTrue("Ein neuer Scan muss den Ton wieder anlaufen lassen", SoundKit.humPlayingForTest())
+        assertEquals(2, humPlaybacks().size)
+    }
+
+    @Test
+    fun `dauerton folgt dem schalter der klickgeraeusche`() {
+        markLoaded()
+        SoundKit.setEnabled(false)
+
+        SoundKit.startScanHum()
+
+        assertTrue("Aus bleibt aus", humPlaybacks().isEmpty())
+        assertFalse(SoundKit.humPlayingForTest())
+
+        SoundKit.setEnabled(true)
+        SoundKit.startScanHum()
+        assertEquals("An muss der Dauerton wieder laufen", 1, humPlaybacks().size)
+    }
+
+    @Test
+    fun `abschalten beendet einen laufenden dauerton`() {
+        markLoaded()
+        SoundKit.startScanHum()
+        assertTrue(SoundKit.humPlayingForTest())
+
+        SoundKit.setEnabled(false)
+
+        assertFalse(
+            "Wer den Ton mitten im Scan abschaltet, will ihn sofort nicht mehr hoeren",
+            SoundKit.humPlayingForTest()
+        )
+    }
+
+    @Test
+    fun `lautloser modus unterdrueckt den dauerton`() {
+        markLoaded()
+        audio.ringerMode = AudioManager.RINGER_MODE_SILENT
+
+        SoundKit.startScanHum()
+
+        assertTrue("Im Lautlos-Modus darf nicht gesummt werden", humPlaybacks().isEmpty())
+    }
+
+    @Test
+    fun `dauerton wartet auf die dekodierung`() {
+        // Ohne markLoaded(): genau der Fall "Scan beginnt kurz nach dem
+        // App-Start". Der Ton darf nicht verloren gehen.
+        SoundKit.startScanHum()
+
+        assertTrue("Der Wunsch muss vorgemerkt sein", SoundKit.humWantedForTest())
+        assertTrue("Ohne dekodierte Datei darf nichts anlaufen", humPlaybacks().isEmpty())
+
+        markLoaded()
+
+        assertTrue("Nach dem Laden muss die Schleife anlaufen", SoundKit.humPlayingForTest())
+        assertEquals(1, humPlaybacks().size)
+    }
+
+    @Test
+    fun `dauerton ist eine nahtlose schleife`() {
+        val samples = pcm(R.raw.scan_hum)
+
+        assertEquals("Der Dauerton muss 2 s lang sein", 88200, samples.size)
+
+        val seam = kotlin.math.abs(samples[0] - samples[samples.size - 1])
+        var maxStep = 0
+        for (i in 0 until samples.size - 1) {
+            maxStep = maxOf(maxStep, kotlin.math.abs(samples[i + 1] - samples[i]))
+        }
+        assertTrue(
+            "Die Naht ($seam) ist groesser als der groesste Sprung im Ton ($maxStep) - " +
+                "die Schleife klickt dann hoerbar",
+            seam <= maxStep
+        )
+
+        // Kein Ein- und Ausblenden an den Enden: eine Blende wuerde die
+        // Naht zerstueckeln. Geprueft wird die untere Grenze - der Ton
+        // atmet (Huellkurve 0,5 Hz), ist in der Mitte also leiser als an
+        // den Enden, aber nie leise.
+        val all = Math.sqrt(samples.sumOf { it.toDouble() * it } / samples.size)
+        fun ratioOf(block: List<Short>): Double =
+            Math.sqrt(block.sumOf { it.toDouble() * it } / block.size) / all
+        val head = ratioOf(samples.take(1000))
+        val tail = ratioOf(samples.takeLast(1000))
+        assertTrue(
+            "Am Anfang sind nur ${"%.2f".format(head)} des Gesamtpegels - das ist eine Einblendung",
+            head > 0.5
+        )
+        assertTrue(
+            "Am Ende sind nur ${"%.2f".format(tail)} des Gesamtpegels - das ist eine Ausblendung",
+            tail > 0.5
+        )
+
+        // Effektivwert im geplanten Band (-29 dBFS): hoerbar, aber klar
+        // unter den Klicks (0,11-0,12).
+        val rms = all / 32767.0
+        assertTrue("Effektivwert $rms liegt ausserhalb 0,028-0,042", rms in 0.028..0.042)
     }
 
     @Test

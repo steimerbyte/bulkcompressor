@@ -294,6 +294,9 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         // beenden bliebe nach dem Schliessen ein Thread mit einer
         // toten Activity in der Warteschlange.
         if (historyReaderDelegate.isInitialized()) historyReader.shutdown()
+        // Ein laufender Scan kann diese Activity ueberleben (er laeuft in
+        // einem eigenen Thread) - sein Ton darf das nicht.
+        SoundKit.stopScanHum()
         super.onDestroy()
     }
 
@@ -769,6 +772,9 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         // dem wiederhergestellten Ordner klingt so - der Scan beginnt ja
         // wirklich. Abgeschaltet wird er ueber denselben Schalter wie
         // die Klicks (SoundKit).
+        // Der Dauerton laeuft ab jetzt und endet mit dem Lesevorgang; er
+        // ist das Signal, dass etwas laeuft, auch ohne Blick aufs Display.
+        SoundKit.startScanHum()
         SoundKit.play(SoundKit.Click.SCAN_START)
         scanning = true
         updateRescanButton()
@@ -799,6 +805,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
                     .onFailure {
                         Log.w(TAG, "Ordner-Scan fehlgeschlagen: $uri", it)
                         scanBeacon.stop()
+                        SoundKit.stopScanHum()
                         scanning = false
                         updateRescanButton()
                         clearScan()
@@ -835,6 +842,9 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     private fun applyScan(result: ScanResult) {
         scanBeacon.stop()
+        // Erst das Summen beenden, dann den Abschluss-Schlag: der Ton
+        // markiert das Ende, er soll nicht ueber dem Dauerton liegen.
+        SoundKit.stopScanHum()
         SoundKit.play(SoundKit.Click.SCAN_DONE)
         scanning = false
         updateRescanButton()

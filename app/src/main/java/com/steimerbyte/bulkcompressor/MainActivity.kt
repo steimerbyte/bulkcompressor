@@ -96,6 +96,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private lateinit var textFolder: TextView
     private lateinit var textSub: TextView
     private lateinit var textSummary: TextView
+    private lateinit var textScanLive: TextView
     private lateinit var textSelection: TextView
     private lateinit var rowSelection: View
     private lateinit var rowSelectionActions: View
@@ -333,6 +334,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         scanBeacon = findViewById(R.id.scan_beacon)
         textSub = findViewById(R.id.text_sub)
         textSummary = findViewById(R.id.text_summary)
+        textScanLive = findViewById(R.id.text_scan_live)
         textSelection = findViewById(R.id.text_selection)
         rowSelection = findViewById(R.id.row_selection)
         rowSelectionActions = findViewById(R.id.row_selection_actions)
@@ -790,6 +792,11 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         textFolder.text = FolderPath.display(uri)
         textSummary.visibility = View.VISIBLE
         textSummary.text = getString(R.string.scan_scanning)
+        // Die Live-Zeile beginnt leer: der Scan meldet sich alle acht
+        // Dateien oder alle 150 ms, und ein Platzhalter waere in dieser
+        // Zeit schon wieder falsch.
+        textScanLive.visibility = View.VISIBLE
+        textScanLive.text = ""
         // Jeder Start entwertet den vorigen Lauf. Ohne diese Nummer
         // ueberschreibt ein langer DCIM-Scan das Ergebnis des
         // Unterordners, den der Benutzer inzwischen gewaehlt hat - die
@@ -807,6 +814,11 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
                     runOnUiThread {
                         if (!isFinishing && generation == scanGeneration) {
                             textSummary.text = "${progress.folders} Ordner · ${progress.files} Dateien"
+                            // Der Scan liefert die Zeile fertig: Zaehler
+                            // vorn, Ereignis hinten, schon gekuerzt. Die
+                            // Oberflaeche fuegt nichts hinzu - sonst gaebe
+                            // es zwei Stellen, die dieselbe Zeile bauen.
+                            textScanLive.text = progress.live
                         }
                     }
                 }
@@ -817,6 +829,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
                     .onFailure {
                         Log.w(TAG, "Ordner-Scan fehlgeschlagen: $uri", it)
                         scanBeacon.stop()
+                        textScanLive.visibility = View.GONE
                         SoundKit.stopScanHum()
                         scanning = false
                         updateRescanButton()
@@ -846,6 +859,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     /** Leerer Zustand nach einem fehlgeschlagenen Scan - keine Reste in der Liste. */
     private fun clearScan() {
         scanResult = null
+        textScanLive.visibility = View.GONE
         selectedIds.clear()
         adapter.submit(emptyList(), selectedIds)
         listMedia.visibility = View.GONE
@@ -854,6 +868,10 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     private fun applyScan(result: ScanResult) {
         scanBeacon.stop()
+        // Ab hier beschreibt die Zusammenfassung den Scan in Zahlen und,
+        // wenn Marker unlesbar waren, mit dem Grund. Die Live-Zeile daneben
+        // wuerde einen Moment behaupten, der vorbei ist.
+        textScanLive.visibility = View.GONE
         // Erst das Summen beenden, dann den Abschluss-Schlag: der Ton
         // markiert das Ende, er soll nicht ueber dem Dauerton liegen.
         SoundKit.stopScanHum()

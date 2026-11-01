@@ -4,6 +4,25 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.9.4] – 2026-11-01
+
+### Hinzugefügt
+
+- **Mitlaufende Zeile im Ordner-Bereich.** Unter „1 Ordner · 17 Dateien"
+  stand während des Scans nichts, obwohl der Scanner bei jedem Takt eine
+  fertige Zeile liefert. Sie steht jetzt genau dort: Zähler vorn („40
+  Dateien · 40 Marker unlesbar"), das eben angefaßte Ereignis hinten
+  („Camera/IMG_0421.jpg"). Eine Zeile, monospace, gedimmt — die Zähler
+  sind die Aussage, das Ereignis der Beleg, dass gerade etwas passiert.
+  Nach dem Scan verschwindet sie: die Zusammenfassung mit dem Grund
+  („Kopf nicht lesbar: FileNotFoundException …") übernimmt an derselben
+  Stelle. Eine stehen bleibende Live-Zeile würde einen vergangenen Moment
+  als Zustand behaupten.
+  - `ScanLiveLineTest` fährt einen echten Scan über einen Anbieter, der
+    keine Datei öffnet: die Zeile ist beim Start sichtbar und leer, trägt
+    während des Laufs die Zähler, ist danach weg, und der Grund steht in
+    der Zusammenfassung.
+
 ## [1.9.3] – 2026-11-01
 
 ### Behoben

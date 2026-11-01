@@ -558,7 +558,7 @@ git config --local core.hooksPath .githooks
 
 Belegt: mit absichtlich rotem Test endet der Marken-Push mit Exit 1
 („Testsuite ist gescheitert — die Marke wird nicht gepusht"), mit grüner
-Suite mit Exit 0 („Suite grün: 289 Tests").
+Suite mit Exit 0 („Suite grün: 290 Tests").
 
 ## Grenzen (ehrlich)
 

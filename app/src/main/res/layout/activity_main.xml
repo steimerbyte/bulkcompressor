@@ -188,6 +188,29 @@
                     android:textSize="12sp"
                     android:visibility="gone" />
 
+                <!--
+                    Die laufende Zeile des Scans: was er gerade anfasst und
+                    was dabei auffaellt ("17 Dateien · 2 Marker unlesbar ·
+                    Camera/IMG_0421.jpg"). Sie steht genau unter der Zaehler-
+                    zeile, weil sie deren Fortsetzung ist - beide beschreiben
+                    denselben Vorgang. Waehrend des Scans sichtbar, danach
+                    weg: eine stehen bleibende Zeile ueber einer abgeschlossenen
+                    Liste waere eine Behauptung ueber den Moment, in dem sie
+                    galt, und beim naechsten Blick falsch.
+                -->
+                <TextView
+                    android:id="@+id/text_scan_live"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:ellipsize="end"
+                    android:fontFamily="monospace"
+                    android:letterSpacing="0.02"
+                    android:maxLines="1"
+                    android:textColor="@color/nothing_dim"
+                    android:textSize="11sp"
+                    android:visibility="gone" />
+
                 <View
                     android:id="@+id/divider_selection"
                     android:layout_width="match_parent"

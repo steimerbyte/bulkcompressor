@@ -32,6 +32,11 @@ nach [SemVer](https://semver.org/lang/de/).
 - `CompressionJob` meldete für neue Dateien Erfolg, ohne den Inhalt der
   geschriebenen Datei je gelesen zu haben — Größe allein hätte einen
   Container mit richtiger Länge und kaputtem Rest durchgelassen.
+- **Offene letzte Box** (Größe 0 = „bis Dateiende") wurde beim Anhängen
+  des Markers nicht geschlossen: der Marker landete in der `mdat` und war
+  danach unsichtbar, die Datei wäre beim nächsten Lauf erneut
+  komprimiert worden. `walk` behält die 0 jetzt, `closeOpenEnded`
+  schreibt die echte Größe — mit Test am Dateiende.
 
 ## [1.6.1] – 2026-10-31
 

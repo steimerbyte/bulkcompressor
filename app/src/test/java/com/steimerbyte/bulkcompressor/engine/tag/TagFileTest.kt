@@ -1,5 +1,6 @@
 package com.steimerbyte.bulkcompressor.engine.tag
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
@@ -163,5 +164,47 @@ class TagFileTest {
         }
 
         assertNull(Mp4Tag.findTagInTail(tail))
+    }
+
+    /**
+     * Manche Schreiber lassen die letzte Box offen (Groesse 0 = "bis
+     * Dateiende"), weil sie beim Schreiben die Endgroesse noch nicht
+     * kannten. Haengt man einfach an, verschluckt diese Box den Marker -
+     * er waere geschrieben und trotzdem unsichtbar, und jede Datei wuerde
+     * beim naechsten Lauf erneut komprimiert.
+     */
+    @Test
+    fun `offene letzte Box wird geschlossen bevor der Marker angehaengt wird`() {
+        val ftyp = byteArrayOf(0, 0, 0, 0x1C) + "ftypisom".toByteArray(Charsets.US_ASCII) +
+            byteArrayOf(0, 0, 2, 0) + "isomiso2mp41".toByteArray(Charsets.US_ASCII)
+        val mdatInhalt = ByteArray(32) { 0x5A }
+        val file = temp.newFile("offen.mp4").apply {
+            // mdat mit Groesse 0 - genau der Fall, der die Endgroesse offen laesst.
+            writeBytes(ftyp + byteArrayOf(0, 0, 0, 0) + "mdat".toByteArray(Charsets.US_ASCII) + mdatInhalt)
+        }
+        val vorher = file.length()
+
+        assertNull(TagFile.write(file, CompressionTag(runs = 1, resultBytes = 77)))
+
+        // Die mdat muss jetzt ihre echte Groesse tragen: Kopf + Inhalt,
+        // aber ohne die angehaengte Marker-Box.
+        val geschlossen = java.io.RandomAccessFile(file, "r").use { raf ->
+            raf.seek(ftyp.size.toLong())
+            raf.readInt()
+        }
+        assertEquals(8 + mdatInhalt.size, geschlossen)
+        assertTrue("Datei muss gewachsen sein", file.length() > vorher)
+        assertEquals(77L, TagFile.read(file)!!.resultBytes)
+    }
+
+    @Test
+    fun `Container ohne ftyp wird nicht angefasst`() {
+        val original = "das ist kein video, sondern text".toByteArray()
+        val file = temp.newFile("falsch.mp4").apply { writeBytes(original) }
+
+        val reason = TagFile.write(file, CompressionTag(runs = 1))
+
+        assertNotNull("Ein Fremdformat muss abgelehnt werden", reason)
+        assertArrayEquals(original, file.readBytes())
     }
 }

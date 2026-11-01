@@ -175,7 +175,12 @@ internal object Mp4Tag {
                 size = raf.readLong()
             } else if (size == 0L) {
                 // "Bis Dateiende": gueltig, aber es gibt danach nichts mehr.
-                boxes.add(Box(offset, length - offset, type))
+                // Die 0 bleibt in der Box stehen - sie ist der einzige
+                // Hinweis darauf, dass das Groessenfeld noch geschrieben
+                // werden muss ([closeOpenEnded]); wer sie hier schon
+                // ersetzen wuerde, koennte den Unterschied hinterher nicht
+                // mehr sehen.
+                boxes.add(Box(offset, 0L, type))
                 return boxes
             }
             if (size < 8 || offset + size > length) return null
@@ -189,7 +194,10 @@ internal object Mp4Tag {
     fun describe(file: File): String = runCatching {
         RandomAccessFile(file, "r").use { raf ->
             val boxes = walk(raf) ?: return@use "Box-Tabelle unlesbar"
-            boxes.joinToString(" ") { "${it.type}@${it.offset}+${it.size}" }
+            boxes.joinToString(" ") {
+                val size = if (it.size == 0L) raf.length() - it.offset else it.size
+                "${it.type}@${it.offset}+$size${if (it.size == 0L) "(offen)" else ""}"
+            }
         }
     }.getOrDefault("nicht lesbar")
 

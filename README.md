@@ -204,8 +204,16 @@ nothing-bulk:1 runs=2 src=4194304 out=1048576 at=1762000000 app=1.7.0
 ```
 
 Der Marker überlebt Neuinstallation, anderen Dateimanager und anderen
-Ordner. Beim nächsten Lauf steht in der Dateiliste **SCHON KOMPRIMIERT**,
-und solche Dateien werden übersprungen. Wer den ersten Lauf zu schwach
+Ordner. **Der Scan liest ihn und setzt markierte Dateien gar nicht erst auf
+die Liste** — wer denselben Ordner ein zweites Mal wählt, bekommt die
+neuen Bilder zu sehen, nicht alles, was beim Start ohnehin übersprungen
+würde. Eine gekürzte Liste ist sichtbar begründet: die Zusammenfassung
+nennt die Zahl („· 12 bereits komprimiert"), das Protokoll je Ordner und
+am Ende die Laufzeit, die der Blick in den Dateikopf gekostet hat.
+
+Der Job prüft den Marker unmittelbar vor jeder Datei **noch einmal** —
+zwischen Ordnerauswahl und Start kann ein anderer Lauf dieselbe Datei
+erwischt haben. Markierte Dateien werden dann übersprungen. Wer den ersten Lauf zu schwach
 eingestellt hatte, schaltet **„Bereits komprimierte erneut bearbeiten"**
 ein — dann läuft die Datei noch einmal, und `runs` zählt hoch.
 

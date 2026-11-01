@@ -799,6 +799,9 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             val result = runCatching {
                 SafScanner(contentResolver).scan(
                     uri,
+                    // "Marker beachten" ist die Vorgabe: was schon einen
+                    // Marker traegt, kommt gar nicht erst auf die Liste.
+                    respectTag = !settings.ignoreCompressionTag,
                     cancelled = { generation != scanGeneration }
                 ) { progress ->
                     runOnUiThread {
@@ -875,12 +878,17 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             } else {
                 ""
             }
+            val taggedNote = if (result.skippedTagged > 0) {
+                getString(R.string.scan_tagged, result.skippedTagged)
+            } else {
+                ""
+            }
             textSummary.text = getString(
                 R.string.scan_summary,
                 result.videoCount,
                 result.imageCount,
                 CompressionJob.formatSize(result.totalBytes)
-            ) + truncatedNote + partialNote
+            ) + truncatedNote + partialNote + taggedNote
             listMedia.visibility = View.VISIBLE
         }
         adapter.submit(result.items, selectedIds)

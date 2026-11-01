@@ -5,6 +5,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.provider.DocumentsContract
 import com.steimerbyte.bulkcompressor.engine.Naming
+import com.steimerbyte.bulkcompressor.engine.tag.TagStore
 import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.model.MediaItem
 import com.steimerbyte.bulkcompressor.model.MediaKind
@@ -19,7 +20,18 @@ import java.util.Locale
  * zwischen Sekunden und Minuten. Es wird nichts dekodiert und kein
  * Vorschaubild geladen, der Speicherbedarf bleibt bei wenigen kB.
  */
-class SafScanner(private val resolver: ContentResolver) {
+class SafScanner(
+    private val resolver: ContentResolver,
+    /**
+     * Steckt in diesem Dokument ein Marker ("schon komprimiert")? Die
+     * Antwort kommt aus demselben [TagStore], den auch der Job vor jeder
+     * Datei fragt - zwei Leser waeren zwei Wahrheiten. Als Funktion
+     * hereingereicht, weil der Marker in der Datei steht: ein Test kann
+     * ihn so beantworten, ohne einen SAF-Anbieter mit lesbarem Deskriptor
+     * nachzubauen.
+     */
+    private val isMarked: (Uri) -> Boolean = TagStore(resolver)::isMarked
+) {
 
     /** Kind-Abrufe, die dieser Lauf fuer die Ordnererkennung ausgegeben hat. */
     private var probes = 0
@@ -27,6 +39,14 @@ class SafScanner(private val resolver: ContentResolver) {
     data class Progress(val folders: Int, val files: Int)
 
     /**
+     * @param respectTag Bereits komprimierte Dateien (Marker in den
+     *                   Metadaten) gar nicht erst auf die Liste setzen.
+     *                   Das ist der Normalfall: wer denselben Ordner ein
+     *                   zweites Mal waehlt, will die neuen Bilder, nicht
+     *                   noch einmal alles. Kostet je Datei einen Blick in
+     *                   den Kopf (und bei EXIF zusaetzlich einen
+     *                   Deskriptor) - deshalb abschaltbar, und deshalb
+     *                   steht die Zahl im Protokoll.
      * @param cancelled Wird vor jedem Kindeintrag gefragt. Waehlt der
      *                  Benutzer waehrend eines laufenden Scans einen
      *                  anderen Ordner, muss der alte Lauf aufhoeren - sonst
@@ -37,6 +57,7 @@ class SafScanner(private val resolver: ContentResolver) {
      */
     fun scan(
         treeUri: Uri,
+        respectTag: Boolean = true,
         cancelled: () -> Boolean = { false },
         onProgress: (Progress) -> Unit = {}
     ): ScanResult {
@@ -44,7 +65,7 @@ class SafScanner(private val resolver: ContentResolver) {
         val rootId = root.getOrNull()
         if (rootId == null) {
             Log.w("Scan", "Wurzelordner nicht lesbar: $treeUri", root.exceptionOrNull())
-            return ScanResult(emptyList(), 0, false)
+            return ScanResult(items = emptyList(), folderCount = 0, truncated = false)
         }
         Log.i("Scan", "Start: $treeUri")
 
@@ -58,6 +79,7 @@ class SafScanner(private val resolver: ContentResolver) {
         var folders = 0
         var skipped = 0
         var skippedNoType = 0
+        var skippedTagged = 0
         var skippedZeroBytes = 0
         var entriesWithoutMime = 0
         var unreadableFolders = 0
@@ -86,6 +108,7 @@ class SafScanner(private val resolver: ContentResolver) {
             var folderBytes = 0L
             var folderNoType = 0
             var folderNoMime = 0
+            var folderTagged = 0
             var folderZeroBytes = 0
 
             val children = queryChildren(treeUri, folderId) { unreadableFolders++ }
@@ -113,6 +136,18 @@ class SafScanner(private val resolver: ContentResolver) {
                         folderNoType++
                         continue
                     }
+                    val documentUri =
+                        DocumentsContract.buildDocumentUriUsingTree(treeUri, child.documentId)
+                    // Der Marker entscheidet, ob die Datei auf die Liste
+                    // kommt - nicht erst der Job. Wer denselben Ordner ein
+                    // zweites Mal waehlt, bekommt sonst eine Liste, in der
+                    // alles steht, was beim Start wieder uebersprungen
+                    // wuerde: die Auswahl waere eine Luege.
+                    if (respectTag && isMarked(documentUri)) {
+                        skippedTagged++
+                        folderTagged++
+                        continue
+                    }
                     // Eine fehlende Groesse im Kind-Cursor ist kein Grund,
                     // die Datei zu verschweigen: manche Provider fuellen
                     // COLUMN_SIZE nicht, und dann waere ein ganzer Ordner
@@ -128,7 +163,7 @@ class SafScanner(private val resolver: ContentResolver) {
                     }
                     items.add(
                         MediaItem(
-                            uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, child.documentId),
+                            uri = documentUri,
                             docId = child.documentId,
                             parentId = folderId,
                             displayName = child.name,
@@ -153,6 +188,7 @@ class SafScanner(private val resolver: ContentResolver) {
                 "Ordner $folders: ${folderNames[folderId] ?: folderId} · $folderVideos Videos" +
                     " · $folderImages Bilder · ${folderBytes} B (${mb(folderBytes)} MB)" +
                     " · $folderNoType uebersprungen ohne Medien-Typ" +
+                    (if (folderTagged > 0) " · $folderTagged bereits komprimiert" else "") +
                     " · $folderZeroBytes ohne Groessenangabe" +
                     " · $folderNoMime Eintraege ohne MIME" +
                     " · ${System.currentTimeMillis() - folderStartedAt} ms"
@@ -172,6 +208,7 @@ class SafScanner(private val resolver: ContentResolver) {
                 " (${mb(bytes)} MB)" +
                 " · $skipped uebersprungen" +
                 " (davon $skippedNoType ohne Medien-Typ)," +
+                " $skippedTagged bereits komprimiert (Marker)," +
                 " $skippedZeroBytes ohne Groessenangabe (trotzdem gelistet)," +
                 " $entriesWithoutMime ohne MIME)" +
                 " · $unreadableFolders Ordner nicht lesbar" +
@@ -187,7 +224,14 @@ class SafScanner(private val resolver: ContentResolver) {
                 "Grenze erreicht: MAX_FILES=$MAX_FILES / MAX_FOLDERS=$MAX_FOLDERS - Rest nicht gelesen"
             )
         }
-        return ScanResult(items, folders, truncated, skipped, unreadableFolders)
+        return ScanResult(
+            items = items,
+            folderCount = folders,
+            truncated = truncated,
+            skipped = skipped,
+            skippedTagged = skippedTagged,
+            unreadableFolders = unreadableFolders
+        )
     }
 
     /** Bytes als MB-Text mit einer Nachkommastelle, deutsch geschrieben. */

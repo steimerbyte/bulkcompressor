@@ -36,6 +36,12 @@ data class ScanResult(
     val truncated: Boolean,
     val skipped: Int = 0,
     /**
+     * Dateien, die schon einen Marker tragen und deshalb gar nicht erst
+     * auf der Liste stehen. Sie werden gezaehlt, weil eine kuerzere Liste
+     * sonst wie ein Fehler aussieht.
+     */
+    val skippedTagged: Int = 0,
+    /**
      * Ordner, deren Kind-Cursor nicht (vollstaendig) gelesen werden konnte.
      * Sie sind der Grund, wenn eine Liste vollstaendig aussieht, aber
      * Dateien fehlen - der Nutzer muss das erfahren, nicht nur das Log.

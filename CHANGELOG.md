@@ -4,6 +4,38 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.9.1] – 2026-11-01
+
+### Geändert
+
+- **Ein zweiter Scan zeigt keine bereits komprimierten Dateien mehr.**
+  Bisher stand jede markierte Datei auf der Liste und wurde erst beim
+  Start übersprungen — die Auswahl war damit eine Aussage über Dateien,
+  die gar nicht drankommen. Jetzt entscheidet der Marker schon beim
+  Scan: markierte Dateien kommen nicht auf die Liste, aus dieser Liste
+  wird der Auftrag gebildet. Der Marker wird mit demselben Leser gelesen,
+  den auch der Job benutzt, also kostet es je Datei einen Blick in den
+  Kopf (bei EXIF zusätzlich einen Deskriptor) — für zehntausend Bilder
+  spürbar, deshalb:
+  - die Zusammenfassung nennt die Zahl („· 12 bereits komprimiert"),
+  - das Protokoll nennt sie je Ordner und am Ende die Laufzeit,
+  - die Einstellung „Marker ignorieren" schaltet den Filter ab und listet
+    wieder alles.
+- Der Job prüft den Marker weiterhin unmittelbar vor jeder Datei:
+  zwischen Ordnerauswahl und Start kann ein anderer Lauf dieselbe Datei
+  erwischt haben.
+
+### Geprüft
+
+- 182 Unit-Tests grün, davon zwei neue: markierte Datei fehlt in der
+  Liste und wird gezählt; abgeschalteter Marker listet beide. Gegen den
+  alten Stand scheitert der erste (nachgewiesen).
+- **Nicht** geprüft: das Lesen des Markers über einen echten SAF-Anbieter
+  auf einem Gerät. Robolectric kann es nicht — `Os.pread` (MP4-Ende) und
+  `ExifInterface(FileDescriptor)` (JPEG) greifen dort auf fehlende
+  Deskriptoren zu. Der Leser selbst ist unverändert der aus 1.7.x und mit
+  Dateien direkt getestet.
+
 ## [1.9.0] – 2026-11-01
 
 ### Behoben

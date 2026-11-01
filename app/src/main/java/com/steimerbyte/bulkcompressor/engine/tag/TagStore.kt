@@ -3,9 +3,9 @@ package com.steimerbyte.bulkcompressor.engine.tag
 import android.content.ContentResolver
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
+import com.steimerbyte.bulkcompressor.engine.DescriptorIo
+import com.steimerbyte.bulkcompressor.engine.readAtMost
 import com.steimerbyte.bulkcompressor.log.Log
-import java.io.FileInputStream
-import java.nio.ByteBuffer
 
 /**
  * Liest den Marker aus einem SAF-Dokument (Galerie).
@@ -32,7 +32,14 @@ class TagStore(private val resolver: ContentResolver) {
     fun read(uri: Uri): CompressionTag? = runCatching {
         val head = head(uri, HEAD_BYTES) ?: return@runCatching null
         val raw = when (TagFile.sniff(head)) {
-            TagFile.Family.MP4 -> Mp4Tag.findTagInTail(tail(uri, TAIL_BYTES) ?: return@runCatching null)
+            TagFile.Family.MP4 ->
+                // HEIC/HEIF/AVIF sind ebenfalls `ftyp`-Dateien, bekommen
+                // aber nie eine `uuid`-Box: sie werden als JPEG geschrieben
+                // und nie in-place ersetzt. Ohne diese Unterscheidung kostet
+                // jedes Kamerafoto einen Deskriptor, einen Sprung ans
+                // Dateiende und 8 KB - fuer ein garantiertes Nichts.
+                if (isStillImageBrand(head)) null
+                else Mp4Tag.findTagInTail(tail(uri, TAIL_BYTES) ?: return@runCatching null)
             TagFile.Family.EXIF -> resolver.openFileDescriptor(uri, "r")?.use { pfd ->
                 runCatching {
                     ExifInterface(pfd.fileDescriptor).getAttribute(ExifInterface.TAG_USER_COMMENT)
@@ -53,7 +60,7 @@ class TagStore(private val resolver: ContentResolver) {
     fun isMarked(uri: Uri): Boolean = read(uri) != null
 
     private fun head(uri: Uri, count: Int): ByteArray? = runCatching {
-        resolver.openInputStream(uri)?.use { input -> input.readNBytes(count) }
+        resolver.openInputStream(uri)?.use { input -> input.readAtMost(count) }
     }.getOrNull()
 
     /**
@@ -62,31 +69,30 @@ class TagStore(private val resolver: ContentResolver) {
      * zu lesen.
      */
     private fun tail(uri: Uri, count: Int): ByteArray? = runCatching {
-        resolver.openFileDescriptor(uri, "r")?.use { pfd ->
-            val channel = FileInputStream(pfd.fileDescriptor).channel
-            val size = channel.size()
-            if (size <= 0) {
-                runCatching { channel.close() }
-                return@use null
-            }
-            val read = minOf(count.toLong(), size).toInt()
-            val buffer = ByteBuffer.allocate(read)
-            channel.position(size - read)
-            while (buffer.hasRemaining()) {
-                if (channel.read(buffer) <= 0) break
-            }
-            runCatching { channel.close() }
-            val out = ByteArray(buffer.position())
-            buffer.flip()
-            buffer.get(out)
-            out
-        }
+        resolver.openFileDescriptor(uri, "r")?.use { pfd -> DescriptorIo.tail(pfd.fileDescriptor, count) }
     }.getOrNull()
+
+    /**
+     * Traegt der `ftyp`-Kopf ein Standbild-Kennzeichen? Dann ist die Datei
+     * ein Bild (HEIC/HEIF/AVIF) und kein Video - ein Marker in einer
+     * `uuid`-Box kommt dort nie vor.
+     */
+    private fun isStillImageBrand(head: ByteArray): Boolean {
+        if (head.size < 12) return false
+        val brand = String(head, 8, 4, Charsets.US_ASCII).lowercase()
+        return brand in STILL_IMAGE_BRANDS
+    }
 
     companion object {
         private const val HEAD_BYTES = 12
 
         /** Genug fuer die letzte Box; der Marker ist eine Zeile. */
         private const val TAIL_BYTES = 8192
+
+        /** `ftyp`-Kennzeichen von Standbildern, die wie MP4 beginnen. */
+        private val STILL_IMAGE_BRANDS = setOf(
+            "heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs",
+            "mif1", "msf1", "avif", "avis"
+        )
     }
 }

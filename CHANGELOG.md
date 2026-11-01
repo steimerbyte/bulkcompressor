@@ -4,6 +4,31 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.7.1] – 2026-11-01
+
+### Behoben
+
+- **Kein Datenverlust mehr, wenn der Cache keine Rückfallebene fasst.**
+  Bisher wurde trotzdem geschrieben: SAF kürzt die Datei schon beim
+  Öffnen, also stand danach eine halbe Datei da. Jetzt wird der Austausch
+  verweigert, bevor das Ziel angefasst wird – das Original bleibt heil,
+  und das Protokoll sagt, warum. Fehlt beim Zurückschreiben der Platz,
+  bleibt die Sicherung im Cache liegen und der Pfad steht in der Meldung
+  (vorher wurde sie gelöscht).
+- **Fortsetzen überspringt keine Fehlschläge mehr.** Dateien, die im
+  abgebrochenen Lauf scheiterten, galten als erledigt und wurden beim
+  Fortsetzen nie wieder angefasst. Zähler und Balken übernehmen jetzt den
+  Stand der Vorsitzung, statt bei null zu beginnen; übersprungene Dateien
+  bewegen den Balken mit.
+- **Audio-Neukodierung konnte endlos laufen.** Ein Encoder mit
+  Puffereingang kennt kein `signalEndOfInputStream` – ohne
+  EOS-Puffer lieferte er nie ein Ende. Das Ende wird jetzt korrekt
+  eingereiht, die Warteschleife auf einen freien Eingabepuffer prüft den
+  Abbruch und gibt auf, statt Puffer zu verwerfen.
+- **Der Encoder-Abschluss beim Video** pollte ohne Abbruchprüfung und
+  ohne Frist; beides ist jetzt gesetzt (15 s), damit ein stiller Encoder
+  den Dienst nicht samt Wake-Lock festhält.
+
 ## [1.7.0] – 2026-11-01
 
 ### Neu

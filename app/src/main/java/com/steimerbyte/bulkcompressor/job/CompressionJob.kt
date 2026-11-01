@@ -55,6 +55,8 @@ class CompressionJob(
     private var afterBytes = 0L
     private var processedBytes = 0L
     private var done = 0
+    /** Bereits erledigte Dateien aus einem fortgesetzten Lauf. */
+    private var resumeBase = 0
     private var failed = 0
     private var skipped = 0
     private val folderNames = HashMap<String, MutableSet<String>>()
@@ -85,7 +87,21 @@ class CompressionJob(
 
         // Ein unterbrochener Lauf wird fortgesetzt, statt von vorn zu beginnen.
         val snapshot = openJournal()
-        val alreadyDone = snapshot?.completed?.keys ?: emptySet()
+        // Fehlgeschlagene Dateien gelten bewusst NICHT als erledigt: genau
+        // sie sind der Grund, warum der Nutzer den Lauf fortsetzt. Vorher
+        // fielen sie stillschweigend heraus, und der Restlauf meldete
+        // "Fertig" ueber einer Luecke.
+        val alreadyDone = snapshot?.completed
+            ?.filterValues { it != RunJournal.Result.FAIL }
+            ?.keys ?: emptySet()
+        resumeBase = alreadyDone.size
+        if (snapshot != null) {
+            // Kennzahlen der Vorsitzung uebernehmen, statt bei Null zu
+            // beginnen - sonst zeigte der Fortsetzungslauf nur den Rest.
+            skipped = snapshot.completed.count { it.value == RunJournal.Result.SKIP }
+            beforeBytes = snapshot.beforeBytes
+            afterBytes = snapshot.afterBytes
+        }
         // Schluessel ist die SAF-Dokument-ID: danach sucht der Dienst die
         // Dateien beim Fortsetzen wieder, nicht nach der URI.
         val work = items.filterNot { it.docId in alreadyDone }
@@ -94,7 +110,9 @@ class CompressionJob(
         Log.i(
             "Job",
             "Start: ${work.size} Dateien ($videoCount Videos, ${work.size - videoCount} Bilder," +
-                " ${formatSize(totalBytes)}) · Ziel: ${describeSettings()}"
+                " ${formatSize(totalBytes)})" +
+                (if (resumeBase > 0) " · ${resumeBase} bereits erledigt" else "") +
+                " · Ziel: ${describeSettings()}"
         )
         Log.i("Job", "Arbeitsverzeichnis: ${context.cacheDir.absolutePath} · Temp-Dateien je Datei neu")
         Log.i("Ram", "Speicher zu Beginn: ${MemoryGuard.snapshot()}")
@@ -159,7 +177,10 @@ class CompressionJob(
                             " · ${formatSize(item.sizeBytes)}"
                     )
                     journal?.mark(item.docId, RunJournal.Result.SKIP, item.sizeBytes, 0, "bereits komprimiert")
-                    done = index + 1
+                    done = resumeBase + index + 1
+                    // Uebersprungene Dateien zaehlen fuer den Balken mit,
+                    // vorher blieb er stehen und sah nach Haenger aus.
+                    publish(index + 1, item.displayName, 0f)
                     continue
                 }
             }
@@ -212,7 +233,7 @@ class CompressionJob(
                 reason = failureReason.take(80)
             )
 
-            done = index + 1
+            done = resumeBase + index + 1
             processedBytes += item.sizeBytes
             if (done % CHECKPOINT_EVERY == 0 && done < work.size) checkpoint("Zwischenstand")
         }
@@ -717,6 +738,14 @@ class CompressionJob(
                     )
                     return
                 }
+                is SafeReplace.Outcome.Refused -> {
+                    failed++
+                    logLine(
+                        "FEHLER ${item.displayName}: nicht ersetzt - ${outcome.reason}."
+                    )
+                    Log.w("Job", "${item.displayName} · nicht ersetzt · ${outcome.reason}")
+                    return
+                }
                 is SafeReplace.Outcome.Damaged -> {
                     failed++
                     logLine(
@@ -891,12 +920,17 @@ class CompressionJob(
         val now = System.currentTimeMillis()
         if (now - lastPublish < PUBLISH_INTERVAL_MS && fileProgress < 1f) return
         lastPublish = now
-        val overall = if (items.isEmpty()) 0f else (index + fileProgress) / items.size
+        // Bezug ist die gesamte Auswahl, nicht die Restliste: bei einem
+        // fortgesetzten Lauf sprang der Balken sonst auf 0 zurueck und
+        // zaehlte nur die noch offenen Dateien.
+        val total = items.size
+        val doneBefore = resumeBase + index
+        val overall = if (total <= 0) 0f else (doneBefore + fileProgress) / total
         JobBus.publish(
             JobBus.state.copy(
                 running = true,
-                total = items.size,
-                done = index,
+                total = total,
+                done = doneBefore,
                 failed = failed,
                 skipped = skipped,
                 currentName = name,

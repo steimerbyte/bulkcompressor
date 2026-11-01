@@ -21,17 +21,7 @@ data class MediaItem(
     val mime: String,
     val sizeBytes: Long,
     val lastModified: Long,
-    val kind: MediaKind,
-    /**
-     * Steht ein "schon komprimiert"-Marker in den Metadaten?
-     *
-     * Der Wert kommt aus dem Ordner-Scan und dient der Anzeige: er sagt
-     * vor dem Start, wie viele Dateien uebersprungen wuerden. Verbindlich
-     * ist er nicht - der Lauf liest den Marker unmittelbar vor jeder
-     * Datei erneut, weil zwischen Scan und Start ein anderer Lauf
-     * dieselbe Datei erwischt haben kann.
-     */
-    val taggedCompressed: Boolean = false
+    val kind: MediaKind
 ) {
     val extension: String
         get() = displayName.substringAfterLast('.', "").lowercase()
@@ -44,7 +34,16 @@ data class ScanResult(
     val items: List<MediaItem>,
     val folderCount: Int,
     val truncated: Boolean,
-    val skipped: Int = 0
+    val skipped: Int = 0,
+    /**
+     * Ordner, deren Kind-Cursor nicht (vollstaendig) gelesen werden konnte.
+     * Sie sind der Grund, wenn eine Liste vollstaendig aussieht, aber
+     * Dateien fehlen - der Nutzer muss das erfahren, nicht nur das Log.
+     */
+    val unreadableFolders: Int = 0,
+    /** Einmal gezaehlt beim Scan - nicht bei jeder Anzeige neu gefiltert. */
+    val videoCount: Int = items.count { it.kind == MediaKind.VIDEO },
+    val imageCount: Int = items.size - videoCount
 ) {
     val videos: List<MediaItem> get() = items.filter { it.kind == MediaKind.VIDEO }
     val images: List<MediaItem> get() = items.filter { it.kind == MediaKind.IMAGE }

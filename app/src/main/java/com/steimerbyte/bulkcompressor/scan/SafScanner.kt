@@ -5,7 +5,6 @@ import android.database.Cursor
 import android.net.Uri
 import android.provider.DocumentsContract
 import com.steimerbyte.bulkcompressor.engine.Naming
-import com.steimerbyte.bulkcompressor.engine.tag.TagStore
 import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.model.MediaItem
 import com.steimerbyte.bulkcompressor.model.MediaKind
@@ -25,16 +24,17 @@ class SafScanner(private val resolver: ContentResolver) {
     data class Progress(val folders: Int, val files: Int)
 
     /**
-     * @param probeTags Marker "schon komprimiert" lesen. Der Ordner-Scan
-     *                  der Oberflaeche braucht das fuer die Anzeige vor dem
-     *                  Start; der Scan des Dienstes laesst es weg, weil der
-     *                  Lauf den Marker ohnehin unmittelbar vor jeder Datei
-     *                  erneut liest und ein zweiter Lesezugriff je Datei
-     *                  nur Zeit kostet.
+     * @param cancelled Wird vor jedem Kindeintrag gefragt. Waehlt der
+     *                  Benutzer waehrend eines laufenden Scans einen
+     *                  anderen Ordner, muss der alte Lauf aufhoeren - sonst
+     *                  ueberschreibt sein Ergebnis die Anzeige des neuen.
+     * @param onProgress Fortschritt, auch mitten im Ordner: ein DCIM-
+     *                  Ordner mit tausenden Bildern liefert sonst minutenlang
+     *                  gar keine Meldung und die Oberflaeche steht still.
      */
     fun scan(
         treeUri: Uri,
-        probeTags: Boolean = true,
+        cancelled: () -> Boolean = { false },
         onProgress: (Progress) -> Unit = {}
     ): ScanResult {
         val root = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }
@@ -60,14 +60,16 @@ class SafScanner(private val resolver: ContentResolver) {
         var unreadableFolders = 0
         var foldersOverLimit = 0
         var truncated = false
-        var tagged = 0
-        // Ein Resolver genuegt: der Store haelt keinen Zustand, nur den Weg
-        // zum Provider.
-        val tags = if (probeTags) TagStore(resolver) else null
+        var cancelledRun = false
+        var sinceProgress = 0
 
         while (queue.isNotEmpty()) {
             if (folders >= MAX_FOLDERS || items.size >= MAX_FILES) {
                 truncated = true
+                break
+            }
+            if (cancelled()) {
+                cancelledRun = true
                 break
             }
             val folderId = queue.removeFirst()
@@ -104,34 +106,38 @@ class SafScanner(private val resolver: ContentResolver) {
                         folderNoType++
                         continue
                     }
+                    // Eine fehlende Groesse im Kind-Cursor ist kein Grund,
+                    // die Datei zu verschweigen: manche Provider fuellen
+                    // COLUMN_SIZE nicht, und dann waere ein ganzer Ordner
+                    // unsichtbar. Sie zaehlt als "Groesse unbekannt" (0) und
+                    // wird komprimiert wie jede andere.
                     if (child.size <= 0) {
-                        skipped++
                         skippedZeroBytes++
                         folderZeroBytes++
-                        continue
                     }
                     if (items.size >= MAX_FILES) {
                         truncated = true
                         break
                     }
-                    val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, child.documentId)
-                    val tag = tags?.read(uri)
-                    if (tag != null) tagged++
                     items.add(
                         MediaItem(
-                            uri = uri,
+                            uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, child.documentId),
                             docId = child.documentId,
                             parentId = folderId,
                             displayName = child.name,
                             mime = child.mime,
-                            sizeBytes = child.size,
+                            sizeBytes = child.size.coerceAtLeast(0L),
                             lastModified = child.lastModified,
-                            kind = kind,
-                            taggedCompressed = tag != null
+                            kind = kind
                         )
                     )
                     if (kind == MediaKind.VIDEO) folderVideos++ else folderImages++
                     folderBytes += child.size
+                    sinceProgress++
+                    if (sinceProgress >= PROGRESS_EVERY) {
+                        sinceProgress = 0
+                        onProgress(Progress(folders, items.size))
+                    }
                 }
             }
             entriesWithoutMime += folderNoMime
@@ -140,7 +146,7 @@ class SafScanner(private val resolver: ContentResolver) {
                 "Ordner $folders: ${folderNames[folderId] ?: folderId} · $folderVideos Videos" +
                     " · $folderImages Bilder · ${folderBytes} B (${mb(folderBytes)} MB)" +
                     " · $folderNoType uebersprungen ohne Medien-Typ" +
-                    " · $folderZeroBytes uebersprungen wegen 0 B" +
+                    " · $folderZeroBytes ohne Groessenangabe" +
                     " · $folderNoMime Eintraege ohne MIME" +
                     " · ${System.currentTimeMillis() - folderStartedAt} ms"
             )
@@ -151,20 +157,21 @@ class SafScanner(private val resolver: ContentResolver) {
         items.sortWith(compareBy({ it.kind }, { it.displayName.lowercase() }))
         val videos = items.count { it.kind == MediaKind.VIDEO }
         val bytes = items.sumOf { it.sizeBytes }
-        val tagNote = if (probeTags) " · $tagged bereits komprimiert (Marker)" else ""
         val truncNote = if (truncated) " · durch Grenze abgeschnitten" else ""
+        val cancelNote = if (cancelledRun) " · abgebrochen" else ""
         Log.i(
             "Scan",
             "Fertig: $folders Ordner · $videos Videos · ${items.size - videos} Bilder · $bytes B" +
                 " (${mb(bytes)} MB)" +
                 " · $skipped uebersprungen" +
-                " (davon $skippedNoType ohne Medien-Typ, $skippedZeroBytes mit 0 B," +
+                " (davon $skippedNoType ohne Medien-Typ)," +
+                " $skippedZeroBytes ohne Groessenangabe (trotzdem gelistet)," +
                 " $entriesWithoutMime ohne MIME)" +
-                tagNote +
                 " · $unreadableFolders Ordner nicht lesbar" +
                 " · $foldersOverLimit Unterordner wegen der Ordnergrenze nicht gelesen" +
                 " · $elapsed ms Laufzeit" +
-                truncNote
+                truncNote +
+                cancelNote
         )
         if (truncated) {
             Log.w(
@@ -172,7 +179,7 @@ class SafScanner(private val resolver: ContentResolver) {
                 "Grenze erreicht: MAX_FILES=$MAX_FILES / MAX_FOLDERS=$MAX_FOLDERS - Rest nicht gelesen"
             )
         }
-        return ScanResult(items, folders, truncated, skipped)
+        return ScanResult(items, folders, truncated, skipped, unreadableFolders)
     }
 
     /** Bytes als MB-Text mit einer Nachkommastelle, deutsch geschrieben. */
@@ -271,7 +278,17 @@ class SafScanner(private val resolver: ContentResolver) {
     }
 
     companion object {
-        const val MAX_FILES = 4000
-        const val MAX_FOLDERS = 400
+        /**
+         * Obergrenzen. Sie sind keine Schutzmauer gegen Fehlbedienung,
+         * sondern gegen einen Provider, der nie endet; ein Kamerafolger mit
+         * fuenftausend Bildern muss vollstaendig erscheinen. Bei 20 000
+         * Eintraegen liegt die Liste bei rund 7 MB - das ist die Grenze, ab
+         * der ein Telefon mit 4 GB knapp wird.
+         */
+        const val MAX_FILES = 20_000
+        const val MAX_FOLDERS = 2_000
+
+        /** So viele Dateien zwischen zwei Fortschrittsmeldungen. */
+        private const val PROGRESS_EVERY = 64
     }
 }

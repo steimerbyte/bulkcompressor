@@ -94,6 +94,9 @@ class TerminalPanel(
     /** Ein Repaint pro Frame reicht; Zeilen treffen oft im Buendel ein. */
     private var renderPending = false
 
+    /** Zugeklappt wurde nicht gezeichnet; der Text ist noch zu bauen. */
+    private var textDirty = false
+
     /** Zugeklappt bleibt nur die Leiste stehen, samt 1dp-Outline darueber. */
     private val collapsedPx = barHeightPx + dp(1)
 
@@ -242,6 +245,7 @@ class TerminalPanel(
                 else -> expandedHeightPx()
             }
         )
+        if (state && textDirty) renderNow()
         if (state && followTail) scrollToEnd()
         updateBadge()
     }
@@ -296,6 +300,23 @@ class TerminalPanel(
      */
     private fun renderNow() {
         renderPending = false
+        // Zahl und Abzeichen sind billig und auch zugeklappt sichtbar.
+        countView.text = activity.resources
+            .getQuantityString(R.plurals.terminal_line_count, buffer.size, buffer.size)
+        updateBadge()
+
+        // Zugeklappt ist der Text unsichtbar. Ihn trotzdem bei jeder Zeile
+        // neu zu bauen (bis 400 Zeilen, je ein Span) hiess: waehrend eines
+        // Laufs oder beim Ziehen eines Reglers wurde bis zu 60-mal pro
+        // Sekunde die gesamte Bildschirmbreite neu gesetzt, ohne dass etwas
+        // davon zu sehen war. Gemerkt wird es sich - beim Aufklappen wird
+        // gebaut.
+        if (!expanded) {
+            textDirty = true
+            return
+        }
+        textDirty = false
+
         val builder = SpannableStringBuilder()
         if (buffer.isEmpty()) {
             builder.append(activity.getString(R.string.terminal_empty))
@@ -316,9 +337,6 @@ class TerminalPanel(
             }
         }
         text.setText(builder, TextView.BufferType.SPANNABLE)
-        countView.text = activity.resources
-            .getQuantityString(R.plurals.terminal_line_count, buffer.size, buffer.size)
-        updateBadge()
         if (followTail) scrollToEnd()
     }
 

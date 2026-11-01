@@ -24,6 +24,12 @@ class TranscodeException(message: String) : Exception(message)
 
 class JobCancelledException : Exception("Abgebrochen")
 
+/** So lange darf der Encoder nach dem letzten Bild auf sein Ende warten. */
+private const val EOS_DEADLINE_NS = 15_000_000_000L
+
+/** So lange darf der Audio-Encoder ohne freien Eingabepuffer bleiben. */
+private const val AUDIO_STALL_NS = 5_000_000_000L
+
 data class VideoSourceInfo(
     val width: Int,
     val height: Int,
@@ -458,11 +464,11 @@ class VideoTranscoder(private val context: Context) {
 
             // Encoder entleeren, sonst laeuft die Surface-Queue voll und
             // der Decoder blockiert dauerhaft.
-            drainEncoder(encoder, session, encoderStats, untilEos = false)
+            drainEncoder(encoder, session, encoderStats, untilEos = false, isCancelled = isCancelled)
         }
 
         encoder.signalEndOfInputStream()
-        drainEncoder(encoder, session, encoderStats, untilEos = true)
+        drainEncoder(encoder, session, encoderStats, untilEos = true, isCancelled = isCancelled)
         onProgress(1f)
         Log.i(
             "Video",
@@ -494,14 +500,24 @@ class VideoTranscoder(private val context: Context) {
         encoder: MediaCodec,
         session: MuxerSession,
         stats: EncoderStats,
-        untilEos: Boolean
+        untilEos: Boolean,
+        isCancelled: () -> Boolean = { false }
     ) {
         val info = MediaCodec.BufferInfo()
+        // Der Abschluss war bisher eine offene Schleife: liefert der
+        // Encoder kein Ende, pollte sie mit 10 ms weiter, ohne dass der
+        // Abbrechen-Knopf wirkte. Danach bleibt der Dienst an einer Datei
+        // haengen, samt Wake-Lock.
+        val deadline = System.nanoTime() + EOS_DEADLINE_NS
         while (true) {
+            if (isCancelled()) throw JobCancelledException()
             val index = encoder.dequeueOutputBuffer(info, if (untilEos) 10_000 else 0)
             when {
                 index == MediaCodec.INFO_TRY_AGAIN_LATER -> {
                     if (!untilEos) return
+                    if (System.nanoTime() > deadline) {
+                        throw TranscodeException("Encoder meldet kein Ende (${EOS_DEADLINE_NS / 1_000_000_000} s)")
+                    }
                 }
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     val outputFormat = encoder.outputFormat
@@ -672,8 +688,10 @@ class VideoTranscoder(private val context: Context) {
             val decoderInfo = MediaCodec.BufferInfo()
             val encoderInfo = MediaCodec.BufferInfo()
             var decoderEos = false
+            var encoderEosQueued = false
             var encoderTrack = -1
             var encoderDone = false
+            var droppedFrames = 0L
             var samplesOut = 0L
             var bytesOut = 0L
             var firstPtsUs = -1L
@@ -708,7 +726,9 @@ class VideoTranscoder(private val context: Context) {
                         outputBuffer.position(decoderInfo.offset)
                         outputBuffer.limit(decoderInfo.offset + decoderInfo.size)
                         var queued = false
+                        var waitStarted = 0L
                         while (!queued) {
+                            if (isCancelled()) throw JobCancelledException()
                             val encoderInput = encoder.dequeueInputBuffer(5_000)
                             if (encoderInput >= 0) {
                                 val target = encoder.getInputBuffer(encoderInput)
@@ -722,14 +742,45 @@ class VideoTranscoder(private val context: Context) {
                                         decoderInfo.presentationTimeUs,
                                         0
                                     )
+                                    queued = true
+                                } else {
+                                    // Puffer nicht belegbar: Index zurueckgeben,
+                                    // sonst fehlt er dem Encoder dauerhaft.
+                                    encoder.queueInputBuffer(encoderInput, 0, 0, 0, 0)
+                                    droppedFrames++
+                                    queued = true
                                 }
-                                queued = true
+                            } else if (waitStarted == 0L) {
+                                waitStarted = System.nanoTime()
+                            } else if (System.nanoTime() - waitStarted > AUDIO_STALL_NS) {
+                                throw TranscodeException("Audio-Encoder nimmt keine Daten mehr an")
                             }
                         }
                     }
                     decoder.releaseOutputBuffer(outputIndex, false)
-                    if (decoderInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
-                        encoder.signalEndOfInputStream()
+                    if (decoderInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0 &&
+                        !encoderEosQueued
+                    ) {
+                        // Ein Encoder mit Puffereingang kennt kein
+                        // signalEndOfInputStream - das gilt nur fuer
+                        // Surface-Eingang. Ohne EOS-Puffer in der Warteschlange
+                        // liefert er nie ein Ende, und die Schleife unten
+                        // dreht endlos.
+                        var signed = false
+                        val waitStarted = System.nanoTime()
+                        while (!signed) {
+                            if (isCancelled()) throw JobCancelledException()
+                            val eosIndex = encoder.dequeueInputBuffer(5_000)
+                            if (eosIndex >= 0) {
+                                encoder.queueInputBuffer(
+                                    eosIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                                )
+                                signed = true
+                            } else if (System.nanoTime() - waitStarted > AUDIO_STALL_NS) {
+                                throw TranscodeException("Audio-Encoder nahm kein Ende an")
+                            }
+                        }
+                        encoderEosQueued = true
                     }
                 }
 
@@ -767,6 +818,7 @@ class VideoTranscoder(private val context: Context) {
             Log.i(
                 "Video",
                 "Ton neu kodiert: $samplesOut Samples · ${mb(bytesOut)}" +
+                    (if (droppedFrames > 0) " · $droppedFrames Rahmen verworfen" else "") +
                     " · ${if (samplesOut > 0) bytesOut / samplesOut else 0} B im Schnitt" +
                     " · PTS ${firstPtsUs.coerceAtLeast(0) / 1000} ms bis" +
                     " ${lastPtsUs.coerceAtLeast(0) / 1000} ms"

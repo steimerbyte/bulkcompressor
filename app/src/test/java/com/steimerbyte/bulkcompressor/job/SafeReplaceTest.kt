@@ -117,7 +117,7 @@ class SafeReplaceTest {
     }
 
     @Test
-    fun `ohne Platz fuer die Sicherung wird beschaedigt statt still weitergemacht`() {
+    fun `ohne Platz fuer die Sicherung wird gar nicht erst geschrieben`() {
         val original = "original".toByteArray()
         val document = FakeDocument(original.copyOf(), failAfter = 1)
         val outcome = replace(
@@ -127,10 +127,13 @@ class SafeReplaceTest {
             freeSpace = 0
         )
 
-        assertTrue("Erwartet: Damaged, war: $outcome", outcome is SafeReplace.Outcome.Damaged)
-        // Ohne Sicherung wird nicht zurueckgeschrieben - der Zustand bleibt
-        // halb geschrieben, und genau das steht dann im Protokoll.
-        assertEquals(1, document.opens)
+        // Frueher wurde trotzdem geschrieben - und weil SAF die Datei schon
+        // beim Oeffnen kuerzt, blieb dann eine halbe Datei stehen. Ohne
+        // Rueckfallebene ist das Oeffnen bereits der Datenverlust, deshalb
+        // verweigert der Austausch die Arbeit, bevor er das Ziel anfasst.
+        assertTrue("Erwartet: Refused, war: $outcome", outcome is SafeReplace.Outcome.Refused)
+        assertEquals(0, document.opens)
+        assertArrayEquals(original, document.bytes)
     }
 
     @Test

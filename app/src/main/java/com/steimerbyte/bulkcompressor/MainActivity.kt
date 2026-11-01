@@ -48,6 +48,11 @@ import com.steimerbyte.bulkcompressor.ui.StatsBoard
 import com.steimerbyte.bulkcompressor.ui.StatsFormat
 import com.steimerbyte.bulkcompressor.ui.TerminalPanel
 
+/**
+ * Die beiden Regler, deren Zug getrennt vom Abschluss behandelt wird.
+ */
+internal enum class Slider { BITRATE, QUALITY }
+
 class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     private lateinit var prefs: SharedPreferences
@@ -55,6 +60,20 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private var treeUri: Uri? = null
     private var scanResult: ScanResult? = null
     private val selectedIds = LinkedHashSet<String>()
+
+    /**
+     * Laufende Nummer des Ordner-Scans. Ein neuer Start entwertet den
+     * vorigen: dessen Ergebnis darf die Anzeige nicht mehr ueberschreiben.
+     */
+    @Volatile
+    private var scanGeneration = 0
+
+    // Kennzahlen der Auswahl. Sie haengen an der Auswahl, nicht an den
+    // Reglern, und werden deshalb nur bei Auswahlwechsel neu gerechnet.
+    private var selectionVideos = 0
+    private var selectionImages = 0
+    private var selectionVideoBytes = 0L
+    private var selectionImageBytes = 0L
 
     private lateinit var stats: StatsBoard
 
@@ -421,16 +440,57 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
 
     private fun setupSliders() {
         seekBitrate.max = 95
-        seekBitrate.setOnSeekBarChangeListener(SimpleSeekListener { value ->
-            settings = settings.copy(bitratePercent = 5 + value)
-            afterSettingsChanged()
-        })
+        seekBitrate.setOnSeekBarChangeListener(
+            SimpleSeekListener(
+                onTick = { sliderTick(Slider.BITRATE, it) },
+                onCommit = { sliderCommit(Slider.BITRATE, it) }
+            )
+        )
 
         seekQuality.max = 55
-        seekQuality.setOnSeekBarChangeListener(SimpleSeekListener { value ->
-            settings = settings.copy(imageQuality = 40 + value)
-            afterSettingsChanged()
-        })
+        seekQuality.setOnSeekBarChangeListener(
+            SimpleSeekListener(
+                onTick = { sliderTick(Slider.QUALITY, it) },
+                onCommit = { sliderCommit(Slider.QUALITY, it) }
+            )
+        )
+    }
+
+    /**
+     * Der Finger am Regler. Hier aendert sich genau eine Zahl - also wird
+     * auch nur diese geschrieben.
+     *
+     * Vorher lief jeder Zwischenschritt durch `afterSettingsChanged()`:
+     * SharedPreferences neu geschrieben, Protokollzeile (und damit ein
+     * Repaint des Terminal-Panels), Konfigurationszeile neu gebaut und
+     * zweimal ueber alle gescannten Dateien gefiltert. Bei einem
+     * Kamerafolger mit tausenden Bildern war das je Reglerbewegung ein
+     * voller Durchlauf ueber die ganze Liste - und weil der SeekBar bei
+     * jeder Fingerbewegung meldet, mehrmals pro Frame.
+     */
+    internal fun sliderTick(slider: Slider, raw: Int) {
+        settings = applySlider(settings, slider, raw)
+        renderSliderLabels()
+    }
+
+    /** Ende des Zugs: jetzt ist der Wert eine Entscheidung, nicht ein Zwischenschritt. */
+    internal fun sliderCommit(slider: Slider, raw: Int) {
+        settings = applySlider(settings, slider, raw)
+        afterSettingsChanged()
+    }
+
+    private fun applySlider(
+        current: CompressSettings,
+        slider: Slider,
+        raw: Int
+    ): CompressSettings = when (slider) {
+        Slider.BITRATE -> current.copy(bitratePercent = 5 + raw)
+        Slider.QUALITY -> current.copy(imageQuality = 40 + raw)
+    }
+
+    private fun renderSliderLabels() {
+        textBitrateValue.text = "${settings.bitratePercent} %"
+        textQualityValue.text = settings.imageQuality.toString()
     }
 
     private fun setupToggles() {
@@ -495,8 +555,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     }
 
     private fun renderValues() {
-        textBitrateValue.text = "${settings.bitratePercent} %"
-        textQualityValue.text = settings.imageQuality.toString()
+        renderSliderLabels()
         renderToggle(markTimestamps, settings.keepTimestamps)
         renderToggle(markExif, settings.keepExif)
         renderToggle(markSound, settings.clickSounds)
@@ -538,9 +597,8 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         setStatus(statusVideoResolution, resolutionActive)
 
         // Ganze Abschnitte: ohne Dateien der Art gibt es nichts zu tun.
-        val chosen = scanResult?.items?.filter { selectedIds.contains(it.docId) }.orEmpty()
-        val hasVideos = chosen.any { it.kind == MediaKind.VIDEO }
-        val hasImages = chosen.any { it.kind == MediaKind.IMAGE }
+        val hasVideos = selectionVideos > 0
+        val hasImages = selectionImages > 0
         val selectsNothing = scanResult == null
 
         groupVideo.alpha = if (hasVideos || selectsNothing) 1f else INACTIVE_ALPHA
@@ -685,24 +743,43 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         textFolder.text = FolderPath.display(uri)
         textSummary.visibility = View.VISIBLE
         textSummary.text = getString(R.string.scan_scanning)
+        // Jeder Start entwertet den vorigen Lauf. Ohne diese Nummer
+        // ueberschreibt ein langer DCIM-Scan das Ergebnis des
+        // Unterordners, den der Benutzer inzwischen gewaehlt hat - die
+        // Liste zeigt dann Dateien aus dem falschen Baum.
+        val generation = ++scanGeneration
         Thread({
             val result = runCatching {
-                SafScanner(contentResolver).scan(uri) { progress ->
+                SafScanner(contentResolver).scan(
+                    uri,
+                    cancelled = { generation != scanGeneration }
+                ) { progress ->
                     runOnUiThread {
-                        if (!isFinishing) {
+                        if (!isFinishing && generation == scanGeneration) {
                             textSummary.text = "${progress.folders} Ordner · ${progress.files} Dateien"
                         }
                     }
                 }
             }
             runOnUiThread {
-                if (isFinishing) return@runOnUiThread
+                if (isFinishing || generation != scanGeneration) return@runOnUiThread
                 result.onSuccess { applyScan(it) }
                     .onFailure {
-                        textSummary.text = it.message ?: getString(R.string.error_permission)
+                        Log.w(TAG, "Ordner-Scan fehlgeschlagen: $uri", it)
+                        clearScan()
+                        textSummary.text = getString(R.string.scan_failed)
                     }
             }
         }, "ordner-scan").start()
+    }
+
+    /** Leerer Zustand nach einem fehlgeschlagenen Scan - keine Reste in der Liste. */
+    private fun clearScan() {
+        scanResult = null
+        selectedIds.clear()
+        adapter.submit(emptyList(), selectedIds)
+        listMedia.visibility = View.GONE
+        afterSelectionChanged()
     }
 
     private fun applyScan(result: ScanResult) {
@@ -718,22 +795,22 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             textSummary.text = getString(R.string.scan_empty)
             listMedia.visibility = View.GONE
         } else {
-            val tagged = result.items.count { it.taggedCompressed }
             val truncatedNote = if (result.truncated) getString(R.string.scan_truncated) else ""
-            val taggedNote = if (tagged > 0) getString(R.string.scan_tagged, tagged) else ""
+            val partialNote = if (result.unreadableFolders > 0) {
+                getString(R.string.scan_unreadable, result.unreadableFolders)
+            } else {
+                ""
+            }
             textSummary.text = getString(
                 R.string.scan_summary,
-                result.videos.size,
-                result.images.size,
+                result.videoCount,
+                result.imageCount,
                 CompressionJob.formatSize(result.totalBytes)
-            ) + truncatedNote + taggedNote
+            ) + truncatedNote + partialNote
             listMedia.visibility = View.VISIBLE
         }
         adapter.submit(result.items, selectedIds)
-        renderSelection()
-        renderActiveState()
-        renderStartButton()
-        updateEstimate()
+        afterSelectionChanged()
     }
 
     private fun toggleSelection(item: MediaItem) {
@@ -767,10 +844,39 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     }
 
     private fun afterSelectionChanged() {
+        recomputeSelection()
         renderSelection()
         renderActiveState()
         renderStartButton()
         updateEstimate()
+    }
+
+    /**
+     * Was in der Auswahl steckt - einmal je Auswahlwechsel.
+     *
+     * Diese Zahlen haengen an der Auswahl, nicht an den Reglern. Sie hier
+     * zu rechnen ist der Grund, warum das Ziehen eines Sliders bei einem
+     * Ordner mit tausenden Dateien nicht mehr die ganze Liste durchlaeuft.
+     */
+    private fun recomputeSelection() {
+        var videos = 0
+        var images = 0
+        var videoBytes = 0L
+        var imageBytes = 0L
+        for (item in scanResult?.items.orEmpty()) {
+            if (!selectedIds.contains(item.docId)) continue
+            if (item.kind == MediaKind.VIDEO) {
+                videos++
+                videoBytes += item.sizeBytes
+            } else {
+                images++
+                imageBytes += item.sizeBytes
+            }
+        }
+        selectionVideos = videos
+        selectionImages = images
+        selectionVideoBytes = videoBytes
+        selectionImageBytes = imageBytes
     }
 
     /**
@@ -802,21 +908,17 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
      * nannte diese Zeile Aufloesung und Qualitaet ein zweites Mal.
      */
     private fun updateEstimate() {
-        val result = scanResult
-        val chosen = result?.items?.filter { selectedIds.contains(it.docId) }
-        if (chosen.isNullOrEmpty()) {
+        if (scanResult == null || selectedIds.isEmpty()) {
             textEstimate.visibility = View.GONE
             return
         }
         textEstimate.visibility = View.VISIBLE
-        val videos = chosen.filter { it.kind == MediaKind.VIDEO }
-        val images = chosen.filter { it.kind == MediaKind.IMAGE }
         textEstimate.text = buildString {
-            append("${videos.size} Videos · ")
-            append(CompressionJob.formatSize(videos.sumOf { it.sizeBytes }))
+            append("$selectionVideos Videos · ")
+            append(CompressionJob.formatSize(selectionVideoBytes))
             append("    ")
-            append("${images.size} Bilder · ")
-            append(CompressionJob.formatSize(images.sumOf { it.sizeBytes }))
+            append("$selectionImages Bilder · ")
+            append(CompressionJob.formatSize(selectionImageBytes))
         }
     }
 
@@ -1050,21 +1152,30 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
-    private class SimpleSeekListener(private val onChange: (Int) -> Unit) :
-        SeekBar.OnSeekBarChangeListener {
+    /**
+     * Zwei Wege statt einem: [onTick] folgt dem Finger, [onCommit] schliesst
+     * den Zug ab. Alles, was speichert, protokolliert oder die abgeleitete
+     * Anzeige neu baut, gehoert an [onCommit].
+     */
+    internal class SimpleSeekListener(
+        private val onTick: (Int) -> Unit,
+        private val onCommit: (Int) -> Unit
+    ) : SeekBar.OnSeekBarChangeListener {
         override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
             if (!fromUser) return
             // Jeder Schritt klickt wie in Minecraft; SoundKit bremst
             // schnell aufeinanderfolgende Wiederholungen von selbst.
             SoundKit.play(SoundKit.Click.TICK)
-            onChange(progress)
+            onTick(progress)
         }
 
         override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
 
         override fun onStopTrackingTouch(seekBar: SeekBar?) {
+            val progress = seekBar?.progress ?: return
             // Der letzte Schritt kann vom Bremsen verschluckt worden sein.
             SoundKit.play(SoundKit.Click.TICK)
+            onCommit(progress)
         }
     }
 

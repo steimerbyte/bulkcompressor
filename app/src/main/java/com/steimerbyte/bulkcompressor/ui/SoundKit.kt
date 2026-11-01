@@ -125,6 +125,14 @@ object SoundKit {
     }
 
     fun play(click: Click) {
+        // Die Bremse zuerst: sonst kostet jeder einzelne Reglerschritt eine
+        // Abfrage beim AudioService (Binder), obwohl danach neun von zehn
+        // Aufrufen ohnehin verworfen werden.
+        val now = SystemClock.uptimeMillis()
+        lastPlayedAt[click]?.let { last ->
+            if (now - last < MIN_GAP_MS) return
+        }
+
         val manager = audio
         val decision = SoundPolicy.decide(
             appEnabled = appEnabled,
@@ -139,15 +147,11 @@ object SoundKit {
         }
         logReasonOnce(SoundPolicy.Reason.ALLOWED)
 
-        val now = SystemClock.uptimeMillis()
         // Achtung: hier stand einmal `?: Long.MIN_VALUE`. `now - Long.MIN_VALUE`
         // laeuft im Long-Bereich ueber und wird negativ - die Bedingung war
         // damit immer wahr und der erste Klick jeder Sorte wurde
         // verschluckt. Weil der Zeitstempel erst nach der Pruefung gesetzt
         // wurde, blieb es nicht beim ersten: der Ton ging nie los.
-        lastPlayedAt[click]?.let { last ->
-            if (now - last < MIN_GAP_MS) return
-        }
         val soundPool = pool ?: return
         val id = streamIds[click] ?: return
         lastPlayedAt[click] = now

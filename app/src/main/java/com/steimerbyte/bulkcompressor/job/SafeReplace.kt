@@ -44,8 +44,19 @@ class SafeReplace(
         /** Schreiben scheiterte, das Original wurde aus der Kopie wiederhergestellt. */
         data class Restored(val reason: String) : Outcome
 
-        /** Schreiben scheiterte und es gab keine Rueckfallebene. */
+        /**
+         * Schreiben scheiterte, obwohl es keine Rueckfallebene gab - das
+         * Original ist beschaedigt. Dieser Fall darf nach der Vorpruefung
+         * nicht mehr eintreten; er bleibt als letzte Sicherung stehen.
+         */
         data class Damaged(val reason: String) : Outcome
+
+        /**
+         * Das Ziel wurde gar nicht angefasst, weil vorher keine
+         * Rueckfallebene angelegt werden konnte. Das Original ist
+         * unveraendert - anders als bei [Damaged] ist nichts verloren.
+         */
+        data class Refused(val reason: String) : Outcome
     }
 
     /**
@@ -96,6 +107,15 @@ class SafeReplace(
         verifyTarget: () -> String?
     ): Outcome {
         val backup = prepareBackup(openOriginalInput, sourceSize, label)
+        if (backup == null) {
+            // Ohne Kopie ist das Oeffnen des Ziels bereits der Datenverlust:
+            // SAF kuerzt die Datei beim Oeffnen, nicht beim ersten Byte.
+            // Die Entscheidung ist hier vollstaendig bekannt - also hier
+            // und nicht nach dem Schreiben.
+            val reason = "keine Rueckfallebene im Cache, Original nicht angetastet"
+            Log.w("Replace", "$label · $reason (${sourceSize / 1024 / 1024} MB noetig)")
+            return Outcome.Refused(reason)
+        }
         val reason = try {
             val written = writePayload(openOriginalOutput, payload)
             val actual = sizeOfTarget()
@@ -110,23 +130,24 @@ class SafeReplace(
         }
 
         if (reason == null) {
-            backup?.delete()
+            backup.delete()
             return Outcome.Written
-        }
-
-        if (backup == null) {
-            Log.e("Replace", "$label · $reason · keine Rueckfallebene vorhanden, Original bleibt beschaedigt")
-            return Outcome.Damaged(reason)
         }
 
         val challenges = restore(openOriginalOutput, backup, label)
         val space = backup.length()
-        backup.delete()
         return if (challenges) {
+            backup.delete()
             Log.w("Replace", "$label · $reason · Original aus $space Bytes Kopie wiederhergestellt")
             Outcome.Restored(reason)
         } else {
-            Log.e("Replace", "$label · $reason · Wiederherstellung ebenfalls fehlgeschlagen, Kopie lag in ${backup.path}")
+            // Die Kopie ist jetzt der einzige Rest des Originals - sie wird
+            // nicht geloescht, und der Pfad in der Meldung stimmt.
+            Log.e(
+                "Replace",
+                "$label · $reason · Wiederherstellung fehlgeschlagen" +
+                    " · die Kopie des Originals liegt in ${backup.path} ($space Bytes) und bleibt dort"
+            )
             Outcome.Damaged(reason)
         }
     }

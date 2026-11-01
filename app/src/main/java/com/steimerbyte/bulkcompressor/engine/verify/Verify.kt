@@ -6,12 +6,13 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import android.provider.DocumentsContract
+import com.steimerbyte.bulkcompressor.engine.DescriptorIo
+import com.steimerbyte.bulkcompressor.engine.readAtMost
 import com.steimerbyte.bulkcompressor.engine.tag.CompressionTag
 import com.steimerbyte.bulkcompressor.engine.tag.Mp4Tag
 import com.steimerbyte.bulkcompressor.engine.tag.TagFile
 import com.steimerbyte.bulkcompressor.engine.tag.TagStore
 import java.io.File
-import java.io.FileInputStream
 import java.io.RandomAccessFile
 
 /**
@@ -142,14 +143,17 @@ object Verifier {
 
         val size = runCatching { documentSize(resolver, uri) }.getOrNull()
         checks += when {
-            size == null -> Check("Groesse", Check.State.SKIPPED, "Provider nennt sie nicht")
+            // 0 ist keine Groesse, sondern eine fehlende Angabe: manche
+            // Provider liefern die Spalte erst verzoegert, und daraus einen
+            // Fehlbefund zu machen hiesse, eine gesunde Ausgabe zu verwerfen.
+            size == null || size <= 0 -> Check("Groesse", Check.State.SKIPPED, "Provider nennt sie nicht")
             expectedBytes > 0 && size != expectedBytes ->
                 Check("Groesse", Check.State.FAILED, "$size B statt $expectedBytes B")
             else -> Check("Groesse", Check.State.OK, "$size B")
         }
 
         val head = runCatching {
-            resolver.openInputStream(uri)?.use { it.readNBytes(HEAD_BYTES) }
+            resolver.openInputStream(uri)?.use { it.readAtMost(HEAD_BYTES) }
         }.getOrNull()
         checks += containerCheck(expectMime, head)
 
@@ -292,7 +296,7 @@ object Verifier {
         return Check("Bild", Check.State.OK, "${options.outWidth}x${options.outHeight}")
     }
 
-    private fun headFile(file: File): ByteArray = FileInputStream(file).use { it.readNBytes(HEAD_BYTES) }
+    private fun headFile(file: File): ByteArray = file.inputStream().use { it.readAtMost(HEAD_BYTES) }
 
     /** Formaterkennung an den ersten Bytes - reine Bytes, kein Android. */
     internal fun sniff(bytes: ByteArray?): Format {
@@ -320,9 +324,7 @@ object Verifier {
         }.getOrNull()
         if (fromColumns != null && fromColumns > 0) return fromColumns
         return runCatching {
-            resolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                FileInputStream(pfd.fileDescriptor).channel.size()
-            }
+            resolver.openFileDescriptor(uri, "r")?.use { pfd -> DescriptorIo.size(pfd.fileDescriptor) }
         }.getOrNull()
     }
 }

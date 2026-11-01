@@ -94,7 +94,7 @@
     <string name="config_images">BILDER\u0020\u0020\u0020max. %1$s · Q%2$d · %3$s</string>
     <string name="config_images_off">BILDER\u0020\u0020\u0020keine Bilder in der Auswahl</string>
     <string name="config_output">AUSGABE\u0020\u0020%1$s</string>
-    <string name="config_options">OPTIONEN\u0020Zeitstempel %1$s · EXIF %2$s</string>
+    <string name="config_options">OPTIONEN\u0020Zeitstempel %1$s · EXIF %2$s · Marker\u00A0%3$s</string>
     <string name="value_unchanged">ORIGINAL</string>
     <string name="value_on">AN</string>
     <string name="value_off">AUS</string>

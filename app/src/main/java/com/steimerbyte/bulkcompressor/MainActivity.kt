@@ -621,7 +621,12 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
                 getString(
                     R.string.config_options,
                     getString(if (settings.keepTimestamps) R.string.value_on else R.string.value_off),
-                    getString(if (settings.keepExif) R.string.value_on else R.string.value_off)
+                    getString(if (settings.keepExif) R.string.value_on else R.string.value_off),
+                    // "AN" heisst: der Marker wird beachtet, bereits
+                    // komprimierte Dateien werden uebersprungen. Der
+                    // Schalter darueber ist die Umkehrung davon, deshalb
+                    // steht hier nicht derselbe Wortlaut.
+                    getString(if (settings.ignoreCompressionTag) R.string.value_off else R.string.value_on)
                 )
             )
         }

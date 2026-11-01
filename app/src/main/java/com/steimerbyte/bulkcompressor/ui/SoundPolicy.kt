@@ -34,24 +34,25 @@ object SoundPolicy {
         ALLOWED("Klick wird gespielt"),
         APP_OFF("App-Schalter 'Klickgeraeusche' ist aus"),
         SILENT_MODE("Telefon ist lautlos oder auf Vibration"),
-        NO_STREAM_VOLUME("Systemlautstaerke ist 0")
+        NO_STREAM_VOLUME("Medienlautstaerke ist 0")
     }
 
     data class Decision(val play: Boolean, val reason: Reason)
 
     /**
      * [ringerMode] ist der Wert aus [AudioManager.getRingerMode],
-     * [systemVolume] die Lautstaerke des Systemtons (`STREAM_SYSTEM`).
-     * Beides als Zahlen, damit die Entscheidung ohne Android pruefbar ist.
+     * [streamVolume] die Lautstaerke des Streams, auf dem gespielt wird
+     * (`STREAM_MUSIC` - seit 1.9.0, vorher `STREAM_SYSTEM`). Beides als
+     * Zahlen, damit die Entscheidung ohne Android pruefbar ist.
      */
     fun decide(
         appEnabled: Boolean,
         ringerMode: Int,
-        systemVolume: Int
+        streamVolume: Int
     ): Decision = when {
         !appEnabled -> Decision(false, Reason.APP_OFF)
         ringerMode != AudioManager.RINGER_MODE_NORMAL -> Decision(false, Reason.SILENT_MODE)
-        systemVolume <= 0 -> Decision(false, Reason.NO_STREAM_VOLUME)
+        streamVolume <= 0 -> Decision(false, Reason.NO_STREAM_VOLUME)
         else -> Decision(true, Reason.ALLOWED)
     }
 }

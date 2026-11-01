@@ -21,7 +21,7 @@ class SoundPolicyTest {
 
     @Test
     fun `bei normalem Modus und Lautstaerke klingelt es`() {
-        val decision = SoundPolicy.decide(appEnabled = true, ringerMode = normal, systemVolume = 5)
+        val decision = SoundPolicy.decide(appEnabled = true, ringerMode = normal, streamVolume = 5)
 
         assertTrue(decision.play)
         assertEquals(SoundPolicy.Reason.ALLOWED, decision.reason)
@@ -29,7 +29,7 @@ class SoundPolicyTest {
 
     @Test
     fun `der app schalter schlaegt alles`() {
-        val decision = SoundPolicy.decide(appEnabled = false, ringerMode = normal, systemVolume = 15)
+        val decision = SoundPolicy.decide(appEnabled = false, ringerMode = normal, streamVolume = 15)
 
         assertFalse(decision.play)
         assertEquals(SoundPolicy.Reason.APP_OFF, decision.reason)
@@ -49,8 +49,8 @@ class SoundPolicyTest {
     }
 
     @Test
-    fun `ohne systemlautstaerke kein ton aber ein grund`() {
-        val decision = SoundPolicy.decide(appEnabled = true, ringerMode = normal, systemVolume = 0)
+    fun `ohne medienlautstaerke kein ton aber ein grund`() {
+        val decision = SoundPolicy.decide(appEnabled = true, ringerMode = normal, streamVolume = 0)
 
         assertFalse(decision.play)
         assertEquals(SoundPolicy.Reason.NO_STREAM_VOLUME, decision.reason)

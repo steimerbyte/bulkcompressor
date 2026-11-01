@@ -104,13 +104,22 @@ def normalize(samples, peak=0.89, fade_ms=0.4):
     return [x / hi * peak for x in faded]
 
 
-def hum(partials, pulse_hz, duration_s=2.0, cutoff_hz=380.0):
+def hum(partials, pulse_hz, duration_s=2.0, cutoff_hz=800.0):
     """Gemeinsamer Baukasten der beiden Dauertoene.
 
     Beide sind sinusfoermig aufgebaut, haben keinen Glanz (Tiefpass bei
-    380 Hz) und sind nahtlos schleifenfaehig: alle Teiltoene und die
-    Pulsfrequenz muessen ganzzahlige Vielfache von 1/duration sein, also
-    von 0,5 Hz.
+    800 Hz - alles darueber waere "hell", nicht "dumpf") und sind nahtlos
+    schleifenfaehig: alle Teiltoene und die Pulsfrequenz muessen
+    ganzzahlige Vielfache von 1/duration sein, also von 0,5 Hz.
+
+    Der **Schwerpunkt** liegt bei 250-500 Hz und nicht beim Grundton:
+    ein Telefonlautsprecher gibt unterhalb von etwa 300 Hz kaum etwas ab
+    (die Membran ist zu klein), und ein Ton, dessen Energie bei 73 Hz
+    liegt, ist dort schlicht nicht zu hoeren - egal wie laut die Datei
+    ist. Der Grundton bleibt trotzdem drin und traegt auf Kopfhoerern
+    das Gewicht; auf dem Lautsprecher hoert man Oktave und Quarte.
+    Dumpf bleibt es, weil oberhalb von 800 Hz nichts liegt - "dumpf"
+    heisst keine Hoehen, nicht "nur Tiefbass".
     """
     total = int(RATE * duration_s)
     out = []
@@ -135,11 +144,12 @@ def scan_hum(duration_s=2.0):
     """
     return hum(
         partials=[
-            (73.5, 0.55),    # Grundton D2
-            (74.0, 0.35),    # 0,5 Hz daneben -> Schwebung
-            (147.0, 0.50),   # Oktave (traegt auf kleinen Lautsprechern)
-            (220.5, 0.38),   # Quinte + Oktave
-            (294.0, 0.14),   # kaum noch - Kante, nicht Glanz
+            (73.5, 0.42),    # Grundton D2 (Kopfhoerer, Koerper)
+            (74.0, 0.28),    # 0,5 Hz daneben -> Schwebung
+            (147.0, 0.55),   # Oktave
+            (220.5, 0.75),   # Quinte + Oktave
+            (294.0, 0.85),   # 4. Harmonische - der Traeger im Lautsprecher
+            (441.0, 0.30),   # Kante, noch unter der Glanzgrenze
         ],
         pulse_hz=0.5,
         duration_s=duration_s,
@@ -157,10 +167,12 @@ def job_hum(duration_s=2.0):
     """
     return hum(
         partials=[
-            (98.0, 0.55),    # Grundton G2
-            (98.5, 0.35),    # 0,5 Hz daneben -> Schwebung
-            (196.0, 0.50),   # Oktave
-            (294.0, 0.30),   # Quinte
+            (98.0, 0.42),    # Grundton G2
+            (98.5, 0.28),    # 0,5 Hz daneben -> Schwebung
+            (196.0, 0.55),   # Oktave
+            (294.0, 0.75),   # Quinte
+            (392.0, 0.85),   # 4. Harmonische - der Traeger im Lautsprecher
+            (588.0, 0.28),   # Kante, noch unter der Glanzgrenze
         ],
         pulse_hz=1.0,
         duration_s=duration_s,
@@ -187,17 +199,18 @@ def lowpass_circular(samples, cutoff_hz):
     return out
 
 
-def normalize_loop(samples, rms=0.035):
+def normalize_peak(samples, peak=0.78):
     """Nur skalieren, nicht blenden - der Ton ist eine Schleife.
 
-    Pegel ueber den Effektivwert statt ueber die Spitze: bei einem Ton,
-    der eine Minute lang laeuft, bestimmt der Effektivwert die
-    wahrgenommene Lautstaerke. Die Klicks sind auf ihre Spitze normiert
-    (0,85-0,89); ein Dauerton mit demselben Effektivwert waere um
-    Groessenordnungen lauter, weil er nicht nach 50 ms aufhoert.
+    Auf die **Spitze** normiert, nicht auf den Effektivwert: seit 1.9.0
+    ist das Ziel, dass der Ton auf einem Telefonlautsprecher deutlich
+    hoerbar ist, und der begrenzende Faktor ist die Vollaussteuerung.
+    Die Spitze liegt bei 0,78, also 2,2 dB unter Vollaussteuerung; der
+    Rest ist Luft fuer den Klick, der darueber erklingt (die App blendet
+    den Dauerton fuer die Dauer des Klicks ab).
     """
-    current = math.sqrt(sum(x * x for x in samples) / max(1, len(samples)))
-    return [x / max(1e-9, current) * rms for x in samples]
+    top = max(abs(x) for x in samples)
+    return [x / max(1e-9, top) * peak for x in samples]
 
 
 def write_wav(path, samples):
@@ -265,13 +278,14 @@ def main():
     # Start-Klick (Spitze 0,85) beim gleichzeitigen Anlauf nicht in die
     # Begrenzung laeuft; App-seitig blendet der Ton ohnehin ein.
     for name, samples in (("scan_hum", scan_hum(2.0)), ("job_hum", job_hum(2.0))):
-        loop = normalize_loop(samples, rms=0.12)
+        loop = normalize_peak(samples, peak=0.78)
         write_wav(os.path.join(OUT, name + ".wav"), loop)
         peak = max(abs(x) for x in loop)
         seam = abs(loop[0] - loop[-1])
         step = max(abs(loop[i + 1] - loop[i]) for i in range(len(loop) - 1))
         crossings = sum(1 for i in range(1, len(loop)) if (loop[i - 1] < 0) != (loop[i] < 0))
-        print(f"{name}: Spitze {peak:.3f} · Naht {seam:.5f} "
+        rms = math.sqrt(sum(x * x for x in loop) / len(loop))
+        print(f"{name}: Spitze {peak:.3f} · RMS {rms:.3f} · Naht {seam:.5f} "
               f"(groesster Sprung {step:.5f}) · Nulldurchgaenge {crossings}")
 
 

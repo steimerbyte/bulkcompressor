@@ -4,6 +4,59 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.9.0] – 2026-11-01
+
+### Behoben
+
+- **Der Dauerton war auf einem Telefonlautsprecher kaum zu hören — drei
+  Ursachen, alle gemessen.**
+
+  1. **Der Stream war der falsche.** Gespielt wurde mit
+     `USAGE_ASSISTANCE_SONIFICATION`, und das landet auf dem
+     *Systemton*, nicht auf Medien. Die Seitentasten regeln die
+     Medienlautstärke; wer sein Telefon auf volle Lautstärke stellt,
+     stellt sie dort ein. Die Systemton-Lautstärke steht davon getrennt
+     und auf vielen Geräten niedrig — der Ton konnte also beliebig laut
+     in der Datei sein und blieb trotzdem leise. Jetzt
+     `USAGE_MEDIA` + `CONTENT_TYPE_SONIFICATION`: Lautstärke kommt von
+     dem Regler, den man tatsächlich in der Hand hat. Die Abschaltregel
+     prüft entsprechend die Medienlautstärke (Grund im Protokoll:
+     `Medienlautstaerke ist 0`).
+  2. **Das Spektrum lag unterhalb des Lautsprechers.** 85 % der Energie
+     saßen unter 150 Hz, der Grundton bei 73,5 Hz — eine Membran von
+     wenigen Millimetern gibt dort praktisch nichts ab, egal wie laut
+     die Datei ist. Jetzt tragen die vierte Harmonische (294 Hz, beim
+     Auftragston 392 Hz) und die Oktave; gemessen 68 % (Auftragston
+     65 %) zwischen 200 und 500 Hz. Dumpf bleibt es trotzdem: über
+     800 Hz liegt **nichts** (Rauheit 0,034), der Tiefpass sitzt jetzt
+     bei 800 statt 380 Hz. „Dumpf" heißt keine Höhen, nicht „nur
+     Tiefbass".
+  3. **Der Pegel war auf den Effektivwert normiert.** 0,12 RMS hießen
+     Spitze 0,32 — 10 dB unter Vollaussteuerung. Jetzt ist auf Spitze
+     0,78 normiert (−2,2 dBFS), Effektivwert 0,27 (−11,5 dBFS).
+
+  Zusammen mit dem Stream-Wechsel ist das deutlich mehr als die
+  geforderten 10×; auf einem Lautsprecher wirkt vor allem Punkt 2, und
+  das ist der Grund, warum mehr Pegel allein nicht gereicht hätte.
+
+- **Ein Klick senkt den Dauerton ab.** Mit Spitze 0,78 plus Klick bei
+  0,85 wären es 1,63 und damit über der Vollaussteuerung. Für die Dauer
+  des Klicks (200 ms) geht der Dauerton auf 0,22 zurück und danach
+  wieder hoch — derselbe Trick wie eine Sidechain-Kompression.
+
+### Geändert
+
+- Der Generator normiert auf die **Spitze** statt auf den Effektivwert
+  (`normalize_peak` statt `normalize_loop`): bei einem Ton, der eine
+  Minute läuft, begrenzt die Spitze, nicht der Mittelwert.
+- Die Tests messen „dumpf" nicht mehr über Nulldurchgänge — die hängen
+  am höchsten starken Anteil und hätten die neue, für Lautsprecher
+  hörbare Fassung fälschlich als „nicht dumpf" verworfen. Geprüft wird
+  jetzt die **Rauheit** (Energie der ersten Differenz; für einen
+  höchsten Anteil f gilt r ≤ 2·sin(π·f/fs), bei 48 kHz ist 0,10 die
+  Grenze für etwa 700 Hz) und der Anteil im Lautsprecherband
+  (RBJ-Bandpass bei 400/500 Hz). Dazu ein Test für die Absenkung.
+
 ## [1.8.0] – 2026-11-01
 
 ### Neu

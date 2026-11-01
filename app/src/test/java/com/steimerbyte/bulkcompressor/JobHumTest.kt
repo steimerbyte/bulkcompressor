@@ -39,7 +39,7 @@ class JobHumTest {
         // diesen Wert waere "kein Ton" aus dem falschen Grund richtig.
         val audio = requireNotNull(SoundKit.audioForTest())
         audio.ringerMode = android.media.AudioManager.RINGER_MODE_NORMAL
-        audio.setStreamVolume(android.media.AudioManager.STREAM_SYSTEM, 7, 0)
+        audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 7, 0)
     }
 
     private fun idle() = shadowOf(Looper.getMainLooper()).idle()

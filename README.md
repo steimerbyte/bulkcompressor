@@ -396,30 +396,43 @@ eigenen Code.
   klickt jeder geänderte Schritt, gedrosselt auf 25 pro Sekunde
   (`MIN_GAP_MS`), damit es nicht knattert.
   Abschaltbar über die Zeile **KLICKGERÄUSCHE**; zusätzlich schweigt die
-  App im Lautlos- und Vibrationsmodus und bei Systemlautstärke 0. Die
+  App im Lautlos- und Vibrationsmodus und bei Medienlautstärke 0. Die
   Systemeinstellung „Berührungsklänge" schaltet hier **nicht** ab — sie
   ist auf vielen Geräten ab Werk aus, und dann stand der Schalter in der
   App sichtbar auf an, ohne dass ein Ton kam. Welche der drei Regeln
   gerade greift, steht im Protokoll (`Sound`, eine Zeile je Wechsel).
   **Während** der Scan läuft, liegt unter den Klicks ein Dauerton:
   ein dumpfes Summen mit Grundton 73,5 Hz (D2), 0,5-Hz-Schwebung,
-  Oktave bei 147 Hz und Quinte bei 220,5 Hz — gemessen 85 % der Energie
-  unter 150 Hz, nichts über 400 Hz. Effektivwert 0,12 (−18 dBFS), also
-  etwa 10 dB lauter als die erste Fassung, Spitze 0,32; er blendet über
-  240 ms ein (sonst liefe er mit dem Start-Klick über die Begrenzung)
-  und über 200 ms aus. Die Datei ist eine **nahtlose Schleife**: alle
-  Teiltöne sind ganzzahlige Vielfache von 0,5 Hz, der Sprung an der Naht
-  (222/32768) ist kleiner als der größte Sprung im Ton selbst (245) —
-  eine Blende würde genau das zerstören.
+  Oktave bei 147 Hz und Quinte bei 220,5 Hz; darüber liegen die vierte
+  Harmonische bei 294 Hz als tragender Anteil und eine Kante bei 441 Hz.
+  Gemessen: 68 % der Energie zwischen 200 und 500 Hz, **nichts über
+  800 Hz** (Rauheit 0,034, das entspricht einem höchsten Anteil unter
+  700 Hz) — dumpf heißt keine Höhen, nicht „nur Tiefbass". Spitze 0,78
+  (−2,2 dBFS), Effektivwert 0,27 (−11,5 dBFS). Er blendet über 240 ms
+  ein und über 200 ms aus. Die Datei ist eine **nahtlose Schleife**:
+  alle Teiltöne sind ganzzahlige Vielfache von 0,5 Hz, der Sprung an der
+  Naht (918/32768) ist kleiner als der größte Sprung im Ton selbst
+  (973) — eine Blende würde genau das zerstören.
   Für einen **laufenden Auftrag** gibt es einen zweiten Dauerton
   derselben Bauart, eine Quarte höher (G2, 98 Hz) und mit doppelt so
-  schnellem Puls — gemessen 510 statt 382 Nulldurchgänge in zwei
-  Sekunden, Spektralähnlichkeit 0,04, also verwandt und trotzdem zu
-  unterscheiden. Er läuft nur, solange die App sichtbar ist **und** der
-  Auftrag läuft (`JobBus`); im Hintergrund schweigt er, beim
-  Zurückkommen wird der Zustand neu gelesen. Laufen Scan und Auftrag
-  gleichzeitig, teilen sich beide den Pegel (jeder 0,7), damit zwei
-  Töne plus Klick nicht in die Begrenzung laufen.
+  schnellem Puls; seine tragenden Anteile sind 392 und 588 Hz, gemessen
+  65 % der Energie zwischen 200 und 500 Hz. Er läuft nur, solange die
+  App sichtbar ist **und** der Auftrag läuft (`JobBus`); im Hintergrund
+  schweigt er, beim Zurückkommen wird der Zustand neu gelesen. Laufen
+  Scan und Auftrag gleichzeitig, teilen sich beide den Pegel (jeder
+  0,7), damit zwei Töne plus Klick nicht in die Begrenzung laufen.
+  **Gespielt wird auf dem Medien-Stream** (`USAGE_MEDIA` mit
+  `CONTENT_TYPE_SONIFICATION`), nicht auf dem Systemton. Die
+  Seitentasten regeln die Medienlautstärke; die Systemton-Lautstärke
+  steht auf vielen Geräten getrennt und niedrig, und wer sein Telefon
+  auf „volle Lautstärke" stellt, stellt die Medienlautstärke ein. Aus
+  demselben Grund prüft die Abschaltregel jetzt diesen Stream: bei
+  Medienlautstärke 0 bleibt es still, mit dem Vermerk
+  `Medienlautstaerke ist 0`.
+  **Ein Klick steht über dem Dauerton, nicht in ihm:** für die Dauer
+  des Klicks (200 ms) geht der Dauerton auf 0,22 seines Pegels zurück
+  und danach wieder hoch — Summe aus 0,78 und 0,85 wäre sonst 1,63 und
+  damit über der Vollaussteuerung.
   Alle Töne des Scans und des Laufs folgen demselben Schalter: wer die
   Klicks abschaltet, hört weder Scan noch Lauf.
 * **Speicherwächter** (`MemoryGuard`): bewusst *eine* Datei nach der
@@ -461,13 +474,13 @@ Auf einem echten Gerät wurde diese Fassung noch nicht ausgeführt — siehe
 * **Die Töne sind gemessen, nicht gehört.** Tonhöhe, Pegel und Ablauf
   der Klick-Dateien stehen als Zahl fest (860 → 1290 Hz für den
   Scan-Anlauf, 550 Hz für das Ende, Spitze 0,85), beim Dauerton
-  Grundton 73,5 Hz und Effektivwert 0,12; Tests prüfen, dass jeder Ton
-  bei `SoundPool` ankommt, dass er schleift (loop −1) und dass die
-  Schleife an der Naht nicht knackt. Ob sie auf einem
-  Telefonlautsprecher gut klingen, entscheidet das Ohr am Gerät —
-  insbesondere sitzt ein 73-Hz-Grundton unterhalb dessen, was kleine
-  Lautsprecher noch wiedergeben; hörbar ist dort vor allem die
-  Oktave bei 147 Hz und die Quinte bei 220 Hz.
+  Grundton 73,5 Hz, Spitze 0,78 und der Anteil im Lautsprecherband; Tests
+  prüfen, dass jeder Ton bei `SoundPool` ankommt, dass er schleift
+  (loop −1), dass die Schleife an der Naht nicht knackt, dass nichts
+  über 800 Hz liegt und dass der Schwerpunkt im Bereich eines
+  Telefonlautsprechers bleibt. Ob sie dort gut klingen, entscheidet das
+  Ohr am Gerät: geprüft ist der Pegel in der Datei und der Stream, auf
+  dem sie läuft — nicht die Membran des jeweiligen Telefons.
 * **Kein Bild-Auflösungs-Limit**, nur Qualität — ein 48-MP-Foto bleibt
   48 MP groß, nur mit weniger Byte pro Pixel.
 * **Die Speicherbremse ist auf einem Gerät nicht erprobt.** Schwellen

@@ -106,6 +106,18 @@ object SoundKit {
      */
     private const val HUM_DUCK = 0.7f
 
+    /**
+     * Waehrend ein Klick erklingt, laeuft der Dauerton in diesem Anteil.
+     *
+     * Der Dauerton hat Spitze 0,78, der Klick 0,85 - gleichzeitig waeren
+     * das 1,63 und damit weit ueber der Vollaussteuerung. Fuer die Dauer
+     * des Klicks (hoechstens 180 ms) geht der Dauerton deshalb zurueck
+     * und danach wieder hoch; das ist derselbe Trick wie eine
+     * Sidechain-Kompression und faellt nur auf, wenn man darauf achtet.
+     */
+    private const val HUM_CLICK_DUCK = 0.22f
+    private const val HUM_CLICK_DUCK_MS = 200L
+
 
     private var pool: SoundPool? = null
     private val streamIds = HashMap<Click, Int>()
@@ -143,6 +155,9 @@ object SoundKit {
     /** Rampen laufen ueber den Main-Looper; ein Handler fuer alle Kanaele. */
     private var fadeHandler: Handler? = null
 
+    /** Steht aus, solange ein Klick ueber dem abgesenkten Dauerton liegt. */
+    private var clickDuckRestore: Runnable? = null
+
     /**
      * Einmal nach dem Aufbau der Oberflaeche aufrufen. Der zweite Aufruf
      * mit denselben Argumenten ist folgenlos -- nur ein neuer Prozess
@@ -152,8 +167,17 @@ object SoundKit {
         appEnabled = enabled
         if (pool != null) return
         audio = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        // **Medien-Stream, nicht Systemton.** USAGE_ASSISTANCE_SONIFICATION
+        // landet auf STREAM_SYSTEM; diese Lautstaerke regeln die
+        // Seitentasten nicht, und sie steht auf vielen Geraeten niedrig
+        // (getrennt von der "vollen Lautstaerke", die man einstellt). Ein
+        // Dauerton, der eine Minute laeuft, ist ausserdem eher Inhalt als
+        // Systemrueckmeldung. Mit CONTENT_TYPE_SONIFICATION bleibt der
+        // Charakter "Rueckmeldung", die Lautstaerke kommt von der
+        // Medienlautstaerke - also von dem Regler, den man tatsaechlich in
+        // der Hand hat.
         val attributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+            .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
         val created = SoundPool.Builder()
@@ -227,8 +251,8 @@ object SoundKit {
         val decision = SoundPolicy.decide(
             appEnabled = appEnabled,
             ringerMode = manager?.ringerMode ?: AudioManager.RINGER_MODE_NORMAL,
-            systemVolume = runCatching {
-                manager?.getStreamVolume(AudioManager.STREAM_SYSTEM) ?: 1
+            streamVolume = runCatching {
+                manager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 1
             }.getOrDefault(1)
         )
         if (!decision.play) {
@@ -263,6 +287,9 @@ object SoundKit {
         // nach dem Laden nachgeholt, statt den Tipp zu verschlucken.
         if (id !in loaded) pending[click] = id
         soundPool.play(id, VOLUME, VOLUME, 1, 0, 1f)
+        // Der Klick soll ueber dem Dauerton stehen, nicht in ihm
+        // untergehen - und die Summe beider darf nicht clippen.
+        duckHumsForClick()
     }
 
     /** Beginn des Ordner-Scans: der Ton laeuft, bis [stopScanHum] ihn beendet. */
@@ -387,20 +414,50 @@ object SoundKit {
         val runnable = object : Runnable {
             override fun run() {
                 step++
-                if (step >= steps) {
-                    channel.volume = to
-                    if (thenStop) runCatching { soundPool.stop(stream) }
+                val done = step >= steps
+                val volume = if (done) to else from + (to - from) * step.toFloat() / steps
+                channel.volume = volume
+                if (thenStop && done) {
+                    runCatching { soundPool.stop(stream) }
                     channel.ramp = null
                     return
                 }
-                val volume = from + (to - from) * step.toFloat() / steps
-                channel.volume = volume
                 runCatching { soundPool.setVolume(stream, volume, volume) }
-                handler.postDelayed(this, HUM_FADE_MS)
+                if (done) channel.ramp = null else handler.postDelayed(this, HUM_FADE_MS)
             }
         }
         channel.ramp = runnable
-        handler.postDelayed(runnable, HUM_FADE_MS)
+        // Sofort der erste Schritt: mit postDelayed waere ein Aufruf mit
+        // steps = 1 (die Absenkung fuer einen Klick) wirkungslos.
+        handler.post(runnable)
+    }
+
+    /**
+     * Senkt die laufenden Dauertoene fuer die Dauer eines Klicks ab und
+     * holt sie danach zurueck.
+     *
+     * Faellt nichts zu tun an, wenn kein Dauerton laeuft - das ist der
+     * Normalfall (ein Klick beim Tippen).
+     */
+    private fun duckHumsForClick() {
+        if (humChannels.values.none { it.stream != 0 }) return
+        val handler = fadeHandler ?: Handler(Looper.getMainLooper()).also { fadeHandler = it }
+        humChannels.forEach { (kind, channel) ->
+            if (channel.stream != 0) {
+                rampHum(kind, channel.stream, channel.volume, targetVolume() * HUM_CLICK_DUCK, 1)
+            }
+        }
+        clickDuckRestore?.let { handler.removeCallbacks(it) }
+        val restore = Runnable {
+            clickDuckRestore = null
+            humChannels.forEach { (kind, channel) ->
+                if (channel.stream != 0) {
+                    rampHum(kind, channel.stream, channel.volume, targetVolume(), 2)
+                }
+            }
+        }
+        clickDuckRestore = restore
+        handler.postDelayed(restore, HUM_CLICK_DUCK_MS)
     }
 
     private fun cancelRamp(kind: Hum) {
@@ -434,8 +491,8 @@ object SoundKit {
         }.getOrNull()
         return "Klickgeraeusche: App-Schalter ${if (appEnabled) "an" else "aus"}" +
             " \u00b7 Systemton-Modus $ringer" +
-            " \u00b7 Systemlautstaerke ${streamVolume ?: "unbekannt"}" +
-            " \u00b7 Medienlautstaerke ${appVolume ?: "unbekannt"}" +
+            " \u00b7 Medienlautstaerke ${appVolume ?: "unbekannt"} (regelt diese Toene)" +
+            " \u00b7 Systemlautstaerke ${streamVolume ?: "unbekannt"} (ohne Wirkung)" +
             " \u00b7 Systemeinstellung Beruehrungsklaenge " +
             when (systemSetting) {
                 1 -> "an (schaltet hier nichts ab)"
@@ -464,6 +521,8 @@ object SoundKit {
     fun release() {
         // Erst die Ausblendung abbrechen: sie wuerde sonst auf einen
         // freigegebenen Pool zugreifen.
+        clickDuckRestore?.let { fadeHandler?.removeCallbacks(it) }
+        clickDuckRestore = null
         humChannels.forEach { (kind, channel) ->
             cancelRamp(kind)
             channel.stream = 0

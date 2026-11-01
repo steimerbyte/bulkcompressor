@@ -122,7 +122,7 @@ class SoundKitTest {
         audio.ringerMode = AudioManager.RINGER_MODE_NORMAL
         // Fester Wert satt Maximum: die Vorgabe des Schattens ist 0, und
         // damit waere "kein Ton" aus dem falschen Grund richtig gewesen.
-        audio.setStreamVolume(AudioManager.STREAM_SYSTEM, 7, 0)
+        audio.setStreamVolume(AudioManager.STREAM_MUSIC, 7, 0)
     }
 
     @After
@@ -201,7 +201,7 @@ class SoundKitTest {
 
     @Test
     fun `systemlautstaerke null unterdrueckt den klick`() {
-        audio.setStreamVolume(AudioManager.STREAM_SYSTEM, 0, 0)
+        audio.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
 
         SoundKit.play(SoundKit.Click.TICK)
 
@@ -450,35 +450,52 @@ class SoundKitTest {
             tail > 0.5
         )
 
-        // Lautstaerke: der Ton soll wesentlich lauter sein als die erste
-        // Fassung (-29 dBFS). Untergrenze 0,10 haelt das fest, die
-        // Obergrenze 0,14 haelt ihn unter den Klicks (0,11-0,12 im
-        // Effektivwert, dort aber nur 50-180 ms lang) und laesst
-        // Spielraum fuer spaetere Aenderungen nur nach oben, nicht ins
-        // Clipping.
+        // Lautstaerke: normiert wird auf die **Spitze 0,78** (−2,2 dBFS),
+        // nicht mehr auf den Effektivwert von 0,12. Der Effektivwert folgt
+        // daraus (rund 0,26). Ueber Vollaussteuerung geht es nur
+        // zusammen mit einem Klick - dafuer senkt SoundKit den Dauerton
+        // fuer die Dauer des Klicks ab (siehe `klick senkt den dauerton ab`).
         val rms = all / 32767.0
-        assertTrue("Effektivwert ${"%.3f".format(rms)} ist zu leise (Soll 0,11-0,13)", rms in 0.11..0.13)
+        assertTrue("Effektivwert ${"%.3f".format(rms)} ist zu leise (Soll 0,24-0,29)", rms in 0.24..0.29)
         val peak = samples.maxOf { kotlin.math.abs(it.toInt()) } / 32767.0
         assertTrue(
-            "Spitze $peak - zusammen mit dem Start-Klick (0,85) waere das ueber 1,0",
-            peak < 0.45
+            "Spitze $peak - ueber 0,80 bleibt zu wenig Luft zur Vollaussteuerung",
+            peak in 0.74..0.80
         )
     }
 
+    /**
+     * "Dumpf" heisst: **keine Hoehen**, nicht "nur Tiefbass". Seit 1.9.0
+     * liegt der Schwerpunkt bei rund 300 Hz, damit ein Telefonlautsprecher
+     * ueberhaupt etwas abstrahlt - ein Ton, dessen Energie bei 73 Hz liegt,
+     * ist auf so einer Membran nicht zu hoeren.
+     *
+     * Gemessen wird ueber die Rauheit (Energie der ersten Differenz im
+     * Verhaeltnis zur Gesamtenergie). Fuer einen reinen Sinus gilt
+     * r = 2·sin(pi·f/fs); ist der hoechste Anteil f_max, dann ist
+     * r <= 2·sin(pi·f_max/fs). Bei 48 kHz sind das fuer 800 Hz 0,114 und
+     * fuer 2 kHz 0,260. Der Grenzwert 0,10 schliesst damit alles ueber
+     * etwa 700 Hz aus - ein Schimmer bei 2 kHz (die erste Fassung) faellt
+     * hier durch, und ein Nulldurchgangszaehler wuerde ihn ebenfalls
+     * sehen, aber die 300-Hz-Fassung faelschlich verwerfen.
+     */
     @Test
     fun `dauerton ist dumpf und nicht hell`() {
         val samples = pcm(R.raw.scan_hum)
 
-        // Ein dumpfer Ton hat kaum Nulldurchgaenge: die Zahl haengt an der
-        // Grundfrequenz, nicht an den Hoehen. Bei 73,5 Hz sind es 294 in
-        // zwei Sekunden; Hoehen wuerden sie nach oben treiben, ein
-        // 1320-Hz-Schimmer (die erste Fassung) auf ueber 5000. Der
-        // Spielraum bis 450 laesst die 0,5-Hz-Schwebung zu, die den
-        // Pegel periodisch kurz durch null fuehrt.
-        val crossings = (1 until samples.size).count { samples[it - 1] < 0 != samples[it] < 0 }
+        val roughness = roughness(samples)
         assertTrue(
-            "$crossings Nulldurchgaenge in 2 s - das ist kein dumpfer Ton (Soll 250-450)",
-            crossings in 250..450
+            "Rauheit ${"%.4f".format(roughness)} - der Ton hat Anteile ueber etwa 700 Hz (Grenze 0,10)",
+            roughness < 0.10
+        )
+
+        // Und der Grund fuer die Umstellung: der Schwerpunkt muss in dem
+        // Band liegen, das ein Handylautsprecher abstrahlt (250-650 Hz).
+        val speechShare = bandShare(samples, centerHz = 400.0, q = 0.7)
+        assertTrue(
+            "Nur ${"%.0f".format(speechShare * 100)} % der Energie liegen bei 400 Hz - " +
+                "auf einem Telefonlautsprecher bleibt davon kaum etwas hoerbar",
+            speechShare > 0.35
         )
     }
 
@@ -515,20 +532,24 @@ class SoundKitTest {
 
         assertEquals("Beide Dauertoene sind 2 s lang", scan.size, job.size)
 
-        // Dumpf: die Nulldurchgaenge haengen an der Grundfrequenz, nicht an
-        // Hoehen. Hohe Anteile wuerden sie nach oben treiben.
-        fun crossings(samples: ShortArray) =
-            (1 until samples.size).count { samples[it - 1] < 0 != samples[it] < 0 }
-        val jobCrossings = crossings(job)
+        // Dumpf wie der Scan-Ton: keine Anteile ueber etwa 700 Hz.
         assertTrue(
-            "$jobCrossings Nulldurchgaenge - der Auftragston ist nicht dumpf (Soll 350-700)",
-            jobCrossings in 350..700
+            "Rauheit ${"%.4f".format(roughness(job))} - der Auftragston ist nicht dumpf",
+            roughness(job) < 0.10
+        )
+        assertTrue(
+            "Nur ${"%.0f".format(bandShare(job, 500.0, 0.7) * 100)} % der Energie bei 500 Hz - " +
+                "auf einem Telefonlautsprecher kaum hoerbar",
+            bandShare(job, 500.0, 0.7) > 0.35
         )
 
-        // Unterscheidbar: eine Quarte hoeher heisst rund ein Drittel mehr
-        // Nulldurchgaenge. Unter 60 waeren die beiden im Vorbeigehoeren
-        // dasselbe Signal.
-        val gap = kotlin.math.abs(jobCrossings - crossings(scan))
+        // Unterscheidbar: der Auftragston liegt eine Quarte hoeher, seine
+        // tragenden Anteile sind 392 und 588 statt 294 und 441 Hz. Die
+        // Nulldurchgaenge folgen dem hoechsten starken Anteil; 60
+        // Unterschied waeren im Vorbeigehoeren dasselbe Signal.
+        fun crossings(samples: ShortArray) =
+            (1 until samples.size).count { samples[it - 1] < 0 != samples[it] < 0 }
+        val gap = kotlin.math.abs(crossings(job) - crossings(scan))
         assertTrue(
             "Nur $gap Nulldurchgaenge Unterschied - die beiden Toene waeren nicht zu unterscheiden",
             gap >= 60
@@ -544,6 +565,37 @@ class SoundKitTest {
             rms(job),
             0.006
         )
+    }
+
+    /**
+     * Der Dauerton ist auf Spitze 0,78 normiert, der Klick auf 0,85 - beide
+     * gleichzeitig waeren 1,63 und damit weit ueber der Vollaussteuerung.
+     * Fuer die Dauer des Klicks geht der Dauerton deshalb auf 0,22 zurueck
+     * (das sind 0,17 Spitze) und danach wieder hoch.
+     */
+    @Test
+    fun `klick senkt den dauerton ab`() {
+        markLoaded()
+        SoundKit.startScanHum()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+        assertEquals(1f, SoundKit.humVolumeForTest(SoundKit.Hum.SCAN), 0.001f)
+
+        SoundKit.play(SoundKit.Click.TICK)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(40))
+        val ducked = SoundKit.humVolumeForTest(SoundKit.Hum.SCAN)
+        assertTrue(
+            "Der Dauerton steht beim Klick noch bei $ducked - 0,78 plus 0,85 clippt",
+            ducked > 0f && ducked <= 0.26f
+        )
+
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(400))
+        assertEquals(
+            "Nach dem Klick muss der Dauerton wieder voll da sein",
+            1f,
+            SoundKit.humVolumeForTest(SoundKit.Hum.SCAN),
+            0.001f
+        )
+        assertTrue("Die Absenkung darf den Ton nicht beenden", SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
     }
 
     @Test
@@ -626,4 +678,56 @@ class SoundKitTest {
 
         assertEquals(expected, loaded)
     }
+
+    /**
+     * Rauheit: Effektivwert der ersten Differenz im Verhaeltnis zum
+     * Effektivwert des Signals. Fuer einen reinen Sinus der Frequenz f ist
+     * das 2·sin(pi·f/fs) - ein direkter, filterfreier Schrankenwert fuer
+     * den hoechsten enthaltenen Anteil.
+     */
+    private fun roughness(samples: ShortArray): Double {
+        val total = Math.sqrt(samples.sumOf { it.toDouble() * it } / samples.size)
+        var diff = 0.0
+        for (i in 1 until samples.size) {
+            val d = (samples[i].toDouble() - samples[i - 1].toDouble())
+            diff += d * d
+        }
+        return Math.sqrt(diff / (samples.size - 1)) / total
+    }
+
+    /**
+     * Anteil der Energie in einem Bandpass um [centerHz] (RBJ-Biquad,
+     * Guete [q]) an der Gesamtenergie. Damit laesst sich pruefen, ob der
+     * Ton ueberhaupt in dem Bereich liegt, den ein Handylautsprecher
+     * abstrahlt - ohne FFT, ohne externe Bibliothek.
+     */
+    private fun bandShare(samples: ShortArray, centerHz: Double, q: Double): Double {
+        val sampleRate = 48000.0
+        val w = 2 * Math.PI * centerHz / sampleRate
+        val alpha = Math.sin(w) / (2 * q)
+        val cos = Math.cos(w)
+        val a0 = 1 + alpha
+        val b0 = alpha / a0
+        val b2 = -alpha / a0
+        val a1 = -2 * cos / a0
+        val a2 = (1 - alpha) / a0
+        var x1 = 0.0
+        var x2 = 0.0
+        var y1 = 0.0
+        var y2 = 0.0
+        var outEnergy = 0.0
+        var totalEnergy = 0.0
+        for (s in samples) {
+            val x = s / 32768.0
+            val y = b0 * x + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1
+            x1 = x
+            y2 = y1
+            y1 = y
+            outEnergy += y * y
+            totalEnergy += x * x
+        }
+        return Math.sqrt(outEnergy / totalEnergy)
+    }
+
 }

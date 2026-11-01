@@ -813,7 +813,15 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
                 ) { progress ->
                     runOnUiThread {
                         if (!isFinishing && generation == scanGeneration) {
-                            textSummary.text = "${progress.folders} Ordner · ${progress.files} Dateien"
+                            // Vor dem ersten gelesenen Ordner steht dort
+                            // "0 Ordner · 0 Dateien" - das liest sich wie ein
+                            // Zaehler, der haengt. Bis die erste Zahl da ist,
+                            // bleibt der Satz stehen.
+                            textSummary.text = if (progress.folders == 0) {
+                                getString(R.string.scan_scanning)
+                            } else {
+                                "${progress.folders} Ordner · ${progress.files} Dateien"
+                            }
                             // Der Scan liefert die Zeile fertig: Zaehler
                             // vorn, Ereignis hinten, schon gekuerzt. Die
                             // Oberflaeche fuegt nichts hinzu - sonst gaebe

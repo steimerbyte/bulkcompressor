@@ -108,12 +108,19 @@ Während des Scans:
   wird; im Ruhezustand zeichnet sie nichts, behält aber ihren Platz, damit
   nichts springt. Ist im System „Animationen entfernen" gewählt, steht das
   Muster still.
-- **Die Live-Zeile** unter der Zählerzeile läuft mit: Zähler vorn
-  („40 Dateien · 40 Marker unlesbar"), das eben angefasste Ereignis hinten
-  („Camera/IMG_0421.jpg"). Nach dem Scan verschwindet sie; an ihrer Stelle
-  steht dann die Zusammenfassung, und wenn Marker unlesbar waren, mit dem
-  Grund („· 40 Marker nicht lesbar (Kopf nicht lesbar:
-  FileNotFoundException …)").
+- **Die Live-Zeile** unter der Zählerzeile läuft mit und nennt in jedem
+  Durchgang, was gerade passiert: „517 Dateien · liest · Camera/IMG_0421.jpg",
+  dann „517 Dateien · prüft 213/517 · Camera/IMG_0421.jpg" — die
+  Marker-Prüfung ist der langsame Teil, und ohne diesen Bruch sah die App
+  dort Minuten lang aus, als täte sie nichts. Gezählt wird, was **gefunden**
+  ist, nicht was schon auf der Liste steht. Nach dem Scan verschwindet die
+  Zeile; an ihrer Stelle steht die Zusammenfassung, und wenn Marker
+  unlesbar waren, mit dem Grund („· 40 Marker nicht lesbar (Kopf nicht
+  lesbar: FileNotFoundException …)").
+- **Das Protokoll** bekommt eine Zeile je gelesenem Ordner
+  (`Ordner 3: DCIM/Camera · 517 Eintraege`) und bei großen Ordnern alle 250
+  geprüfte Marker eine Fortschrittszeile. Vorher schwieg es, bis der Ordner
+  fertig war.
 - **Der Scan endet immer mit einer Aussage**: „1 Ordner · 17 Dateien",
   „Keine Videos oder Bilder gefunden." oder „Ordner konnte nicht gelesen
   werden. Einzelheiten im Terminal."
@@ -264,7 +271,9 @@ es den Inhalt hoch, statt ihn zu verdecken. Zu hat es die Höhe einer
 40-dp-Leiste mit Zeilenzahl und Richtungspfeil.
 
 Es hält die letzten **400 Zeilen** im Speicher und läuft mit, auch mitten
-im Lauf. Vier Knöpfe darunter:
+im Lauf — beim Scannen mit einer Zeile je Ordner und einem Markerstand alle
+250 Dateien, damit bei einem großen Ordner nicht minutenlang Stille
+herrscht. Vier Knöpfe darunter:
 
 | Griff | Wirkung |
 |---|---|
@@ -573,7 +582,7 @@ ausgeführt — siehe [Grenzen](#grenzen-ehrlich).
 ./gradlew :app:testDebugUnitTest
 ```
 
-**291 JVM-Tests**, alle ohne Gerät und ohne Emulator (der Host hat kein
+**293 JVM-Tests**, alle ohne Gerät und ohne Emulator (der Host hat kein
 `/dev/kvm`). `./tools/release.sh` fängt einen roten Lauf ab und verweigert
 die Marke, der `pre-push`-Haken tut dasselbe.
 
@@ -636,7 +645,7 @@ git config --local core.hooksPath .githooks
 
 Belegt: mit absichtlich rotem Test endet der Marken-Push mit Exit 1
 („Testsuite ist gescheitert — die Marke wird nicht gepusht"), mit grüner
-Suite mit Exit 0 („Suite grün: 291 Tests").
+Suite mit Exit 0 („Suite grün: 293 Tests").
 
 ## Grenzen (ehrlich)
 

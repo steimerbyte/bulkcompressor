@@ -762,6 +762,56 @@ class SafScannerFilterTest {
     }
 
     /**
+     * Der Scan muss sich vom ersten Moment an bewegen.
+     *
+     * Vorher blieb die Zeile bei einem Ordner voller Bilder stumm, bis alle
+     * Marker gelesen waren: die Meldungen entstanden nur beim Einordnen in
+     * der Liste (Durchgang 3), davor stand dort "0 Dateien". Fuer den
+     * Benutzer sah das aus, als taete die App nichts.
+     */
+    @Test
+    fun `stand steht schon waehrend des lesens in der zeile`() {
+        val resolver = resolverWith(
+            file("primary:DCIM/a.jpg", "a.jpg"),
+            file("primary:DCIM/b.jpg", "b.jpg"),
+            file("primary:DCIM/c.jpg", "c.jpg")
+        )
+        val gemeldet = ArrayList<SafScanner.Progress>()
+
+        SafScanner(resolver, StubProbe()).scan(treeUri()) { gemeldet.add(it) }
+
+        assertTrue("Die erste Meldung muss sofort kommen: ${gemeldet.map { it.live }}",
+            gemeldet.first().live.contains("liest"))
+        // Die Marker-Pruefung ist der langsame Teil und braucht einen Bruch:
+        // "prüft 1/3" sagt, welche Datei von wie vielen gerade dran ist.
+        assertTrue("Kein Bruch im Fortschritt: ${gemeldet.map { it.live }}",
+            gemeldet.any { it.live.contains("prüft 1/3") })
+        // Gezaehlt wird, was gefunden ist - nicht, was schon auf der Liste
+        // steht. Sonst stuende dort bis zum Ordnerende eine 0.
+        assertEquals("Der Zaehler muss dem Fund folgen", 3, gemeldet.last().files)
+    }
+
+    /** Das Protokoll muss sich waehrend des Scans bewegen, nicht erst am Ende. */
+    @Test
+    fun `jeder gelesene ordner bekommt eine protokollzeile`() {
+        org.robolectric.shadows.ShadowLog.clear()
+        val resolver = resolverWith(
+            file("primary:DCIM/a.jpg", "a.jpg"),
+            file("primary:DCIM/b.jpg", "b.jpg")
+        )
+
+        SafScanner(resolver, StubProbe()).scan(treeUri()) {}
+
+        val zeilen = org.robolectric.shadows.ShadowLog.getLogsForTag("Scan")
+            .filter { it.type == android.util.Log.INFO }
+            .map { it.msg }
+        assertTrue(
+            "Ohne Ordnerzeile schweigt das Protokoll bei grossen Ordnern: $zeilen",
+            zeilen.any { it.contains("Ordner 1:") && it.contains("2 Eintraege") }
+        )
+    }
+
+    /**
      * Die Zeile steht in der Kopfzeile der Liste - sie darf nicht wachsen.
      * Tiefe, lange Namen und viele Zaehler zusammen sind der Fall, in dem
      * eine ungedrosselte Zeile das Layout sprengt.

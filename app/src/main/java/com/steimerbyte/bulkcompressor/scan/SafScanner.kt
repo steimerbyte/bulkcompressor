@@ -140,6 +140,16 @@ class SafScanner(
         var cancelledRun = false
         var sinceProgress = 0
         var lastProgressAt = startedAt
+        // Gefundene Dateien, nicht gelistete: waehrend Ordner gelesen und
+        // Marker geprueft werden, steht noch nichts auf der Liste. Eine
+        // Oberflaeche, die dort "0 Dateien" zeigt, sieht aus, als taete die
+        // App nichts - genau das war der Fehler.
+        var seenFiles = 0
+        // Die zuletzt gemeldete Phase. Ein Wechsel ("liest" -> "prüft
+        // 213/517") wird immer sofort geschickt: sonst schluckt die
+        // Drosselung genau den Moment, in dem der Benutzer merkt, dass
+        // der Scan weitergeht.
+        var lastStage = ""
 
         /**
          * Meldet das eben behandelte Ereignis - aber gedrosselt.
@@ -153,26 +163,46 @@ class SafScanner(
          * Anbieter ab, bei dem eine Marker-Abfrage allein 20 ms kostet und
          * die Dateigrenze erst nach Sekunden erreicht waere.
          */
-        fun report(folderLabel: String, name: String, note: String) {
+        fun report(
+            folderLabel: String,
+            name: String,
+            note: String,
+            stage: String = "",
+            phase: String = stage,
+            force: Boolean = false
+        ) {
             sinceProgress++
             val now = System.currentTimeMillis()
-            if (sinceProgress < PROGRESS_FILES && now - lastProgressAt < PROGRESS_INTERVAL_MS) return
+            // Die Stufe, nicht der Text: "prüft 213/517" aendert sich mit
+            // jeder Datei und wuerde die Drosselung aushebeln. Ein Wechsel
+            // der Stufe ("liest" -> "prüft") dagegen wird sofort
+            // geschickt - sonst schluckt die Drosselung genau den Moment,
+            // in dem der Benutzer merkt, dass der Scan weitergeht.
+            val stageChanged = stage != lastStage
+            if (!force && !stageChanged && sinceProgress < PROGRESS_FILES && now - lastProgressAt < PROGRESS_INTERVAL_MS) return
             sinceProgress = 0
             lastProgressAt = now
+            lastStage = stage
             onProgress(
                 Progress(
                     folders = folders,
-                    files = items.size,
+                    files = seenFiles,
                     live = liveLine(
-                        files = items.size,
+                        files = seenFiles,
                         tagged = skippedTagged,
                         copies = copiesSkipped,
                         unreadable = markersUnreadable,
+                        phase = phase,
                         event = tail(folderLabel, name, note)
                     )
                 )
             )
         }
+
+        // Sofort eine Zeile, nicht erst nach dem ersten Ordner: der Start
+        // ist der Moment, in dem der Benutzer sonst auf einen toten
+        // Bildschirm schaut.
+        report("", "", "", stage = "start", phase = "liest Ordner", force = true)
 
         while (queue.isNotEmpty()) {
             if (folders >= MAX_FOLDERS || items.size >= MAX_FILES) {
@@ -199,6 +229,11 @@ class SafScanner(
             var folderZeroBytes = 0
 
             val children = queryChildren(treeUri, folderId) { unreadableFolders++ }
+            // Eine Zeile je Ordner, sobald seine Eintraege da sind. Ohne
+            // sie schweigt das Protokoll bei einem Ordner mit tausenden
+            // Bildern, bis die Marker aller Dateien gelesen sind.
+            Log.i("Scan", "Ordner $folders: $folderLabel · ${children.size} Eintraege")
+            report(folderLabel, "", "", stage = "liest", force = true)
 
             // Durchgang 1: Ordner einreihen, Dateien sammeln. Getrennt vom
             // Marker-Lesen, weil der Geschwister-Abgleich die Einordnung
@@ -232,6 +267,11 @@ class SafScanner(
                     val documentUri =
                         DocumentsContract.buildDocumentUriUsingTree(treeUri, child.documentId)
                     candidates.add(Candidate(child, documentUri, kind))
+                    seenFiles++
+                    // Der Name gehoert in die Zeile: eine Zahl, die
+                    // hochzaehlt, zeigt, dass etwas passiert; ein Name
+                    // zeigt, was.
+                    report(folderLabel, child.name, "", stage = "liest")
                 }
             }
 
@@ -241,12 +281,29 @@ class SafScanner(
             val readings: HashMap<String, MarkerReading>? =
                 if (respectTag) HashMap(candidates.size * 2) else null
             if (readings != null) {
+                var read = 0
+                val total = candidates.size
                 for (candidate in candidates) {
                     if (cancelled()) {
                         cancelledRun = true
                         break
                     }
                     readings[candidate.child.documentId] = readMarker(candidate.uri)
+                    read++
+                    // Das ist der langsame Teil: je Datei ein Blick in den
+                    // Kopf, bei EXIF zusaetzlich ein Deskriptor. Ohne
+                    // Meldung sah die App hier Minuten lang aus, als taete
+                    // sie nichts.
+                    report(
+                        folderLabel,
+                        candidate.child.name,
+                        "",
+                        stage = "prüft",
+                        phase = "prüft $read/$total"
+                    )
+                    if (read % MARKER_LOG_STEP == 0) {
+                        Log.i("Scan", "Marker $read/$total in $folderLabel")
+                    }
                 }
             }
             if (cancelledRun) break
@@ -444,9 +501,9 @@ class SafScanner(
             onProgress(
                 Progress(
                     folders = folders,
-                    files = items.size,
+                    files = seenFiles,
                     live = liveLine(
-                        files = items.size,
+                        files = seenFiles,
                         tagged = skippedTagged,
                         copies = copiesSkipped,
                         unreadable = markersUnreadable,
@@ -544,9 +601,25 @@ class SafScanner(
      * erkennt der Benutzer, dass Dateien wegen eines Markers fehlen -, das
      * Ereignis ist der Beleg, dass gerade etwas passiert.
      */
-    private fun liveLine(files: Int, tagged: Int, copies: Int, unreadable: Int, event: String): String {
+    private fun liveLine(
+        files: Int,
+        tagged: Int,
+        copies: Int,
+        unreadable: Int,
+        phase: String = "",
+        event: String
+    ): String {
         val head = StringBuilder()
         head.append(files).append(if (files == 1) " Datei" else " Dateien")
+        // Die Phase steht direkt hinter der Zahl und vor den Zaehlern: sie
+        // sagt, *was* gerade laeuft ("liest", "prüft 213/517"), die
+        // Zaehler sagen, was dabei herauskam.
+        if (phase.isNotBlank()) {
+            val text = oneLine(phase)
+            if (head.length + SEPARATOR.length + text.length <= MAX_LIVE_CHARS) {
+                head.append(SEPARATOR).append(text)
+            }
+        }
         // Reihenfolge nach Aussage, nicht nach Zufall: die Trefferzahl
         // steht vorn (wie in der Beispielzeile des Vertrags), danach die
         // Lesefehler - Invariante 2 verlangt sie sichtbar - und zuletzt die
@@ -861,6 +934,9 @@ class SafScanner(
          * Abfrage je Datei verlangsamen.
          */
         private const val MAX_PROBES = 2_000
+
+        /** Protokollzeile je so vielen gelesenen Markern in einem Ordner. */
+        private const val MARKER_LOG_STEP = 250
 
         private const val UNKNOWN_MIME = "application/unknown"
         private const val BINARY_MIME = "application/octet-stream"

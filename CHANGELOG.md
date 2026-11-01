@@ -4,6 +4,36 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.9.6] – 2026-11-01
+
+### Behoben
+
+- **Der Scan sah aus, als täte er nichts.** Bei einem Ordner mit vielen
+  Dateien stand in der Ordner-Karte minutenlang nur „Ordner wird gelesen …"
+  und darunter der Anfangszustand; im Protokoll ebenfalls Stille. Ursache:
+  Fortschritt entstand nur beim Einordnen in die Liste (Durchgang 3),
+  während der langsame Teil — je Datei ein Blick in den Dateikopf für den
+  Marker — gar nichts meldete. Bei 500 Fotos waren das 500 Lesezugriffe
+  ohne eine einzige Zeile.
+  - Die Live-Zeile nennt jetzt in jedem Durchgang, was läuft:
+    „517 Dateien · liest · Camera/IMG_0421.jpg", dann
+    „517 Dateien · prüft 213/517 · Camera/IMG_0421.jpg". Die erste Meldung
+    kommt vor dem ersten Ordner, ein Phasenwechsel wird nie gedrosselt.
+  - Gezählt wird, was **gefunden** ist, nicht was schon auf der Liste
+    steht — vorher blieb der Zähler bei „0 Dateien", bis der ganze Ordner
+    durch war.
+  - Die Zählerzeile zeigt „Ordner wird gelesen …", solange noch kein Ordner
+    fertig ist, statt „0 Ordner · 0 Dateien".
+  - Das Protokoll bekommt eine Zeile je Ordner (`Ordner 3: DCIM/Camera ·
+    517 Eintraege`) und bei großen Ordnern alle 250 Marker eine
+    Fortschrittszeile.
+
+### Tests
+
+- `SafScannerFilterTest`: die erste Meldung trägt schon „liest", der
+  Marker-Durchgang nennt den Bruch („prüft 1/3"), der Zähler folgt dem
+  Fund, und jeder gelesene Ordner hinterlässt eine Protokollzeile.
+
 ## [1.9.5] – 2026-11-01
 
 ### Geändert

@@ -568,6 +568,102 @@ class SoundKitTest {
     }
 
     /**
+     * **Der Fehler, der niemandem auffallen wuerde, bis das Telefon in der
+     * Hosentasche summt.** `stopHum` blendet ueber 160 ms aus und haelt
+     * erst im letzten Schritt an. Wird in diesem Fenster ein zweites Mal
+     * gestoppt, sieht der zweite Aufruf "kein Strom mehr" - und wenn er
+     * dabei die laufende Rampe abloest, faellt der Schritt, der anhaelt,
+     * mit weg. Die Endlosschleife (loop = -1) liefe dann fuer immer
+     * weiter. Ausgeloest wird das im Normalbetrieb: `onStop` und
+     * `onDestroy` der Activity rufen beide `stopJobHum()`.
+     */
+    @Test
+    fun `zweiter stopp laesst die ausblendung laufen`() {
+        markLoaded()
+        SoundKit.startScanHum()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+        // Der Zaehler gehoert dem Objekt und laeuft ueber die Tests hinweg -
+        // verglichen wird deshalb der Zuwachs.
+        val before = SoundKit.stopCountForTest()
+
+        SoundKit.stopScanHum()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(40))
+        SoundKit.stopScanHum()   // der zweite Aufruf, mitten in der Ausblendung
+
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+        assertEquals(
+            "Der Strom wurde nie angehalten - die Endlosschleife laeuft im Hintergrund weiter",
+            before + 1,
+            SoundKit.stopCountForTest()
+        )
+        assertFalse(SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
+        assertEquals(1, humPlaybacks().size)
+    }
+
+    /**
+     * Verlaesst man die App und kommt sofort zurueck, laeuft `onStop` vor
+     * `onResume` - der Neustart faellt in die Ausblendung. Wird der alte
+     * Strom dabei nicht angehalten, laufen zwei Schleifen derselben Datei
+     * nebeneinander, und die Pegelteilung zaehlt nur eine.
+     */
+    @Test
+    fun `neustart waehrend der ausblendung stoppt den alten strom`() {
+        markLoaded()
+        SoundKit.startScanHum()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+        val before = SoundKit.stopCountForTest()
+
+        SoundKit.stopScanHum()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(40))
+        SoundKit.startScanHum()
+
+        assertEquals(
+            "Der alte Strom muss angehalten werden",
+            before + 1,
+            SoundKit.stopCountForTest()
+        )
+        assertEquals(2, humPlaybacks().size)
+        assertTrue("Der neue Strom muss laufen", SoundKit.humPlayingForTest(SoundKit.Hum.SCAN))
+
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+        assertEquals(
+            "Ein einzelner Ton muss den ganzen Pegel haben - zwei Stroeme zaehlten als zwei",
+            1f,
+            SoundKit.humVolumeForTest(SoundKit.Hum.SCAN),
+            0.001f
+        )
+        assertEquals(
+            "Der alte Strom darf nicht nachtraeglich noch angehalten werden",
+            before + 1,
+            SoundKit.stopCountForTest()
+        )
+    }
+
+    /**
+     * Zwei Dauertoene plus Klick: 0,78·(0,6·2·x) + 0,85 muss unter 1,0
+     * bleiben. Deshalb teilen sich beide das Klick-Budget.
+     */
+    @Test
+    fun `klick absenkung teilt ihr budget auf beide toene`() {
+        markLoaded()
+        SoundKit.startScanHum()
+        SoundKit.startJobHum()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+        assertEquals(0.6f, SoundKit.humVolumeForTest(SoundKit.Hum.SCAN), 0.001f)
+
+        SoundKit.play(SoundKit.Click.TICK)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(40))
+        val scan = SoundKit.humVolumeForTest(SoundKit.Hum.SCAN)
+        val job = SoundKit.humVolumeForTest(SoundKit.Hum.JOB)
+        val peak = 0.78f * (scan + job) + 0.85f
+        assertTrue(
+            "Summenspitze ${"%.3f".format(peak)} beim Klick - das clippt (Soll <= 1,0)",
+            peak <= 1.0f
+        )
+        assertTrue("Beide Toene muessen abgesenkt sein", scan > 0f && job > 0f)
+    }
+
+    /**
      * Der Dauerton ist auf Spitze 0,78 normiert, der Klick auf 0,85 - beide
      * gleichzeitig waeren 1,63 und damit weit ueber der Vollaussteuerung.
      * Fuer die Dauer des Klicks geht der Dauerton deshalb auf 0,22 zurueck
@@ -607,6 +703,11 @@ class SoundKitTest {
 
         SoundKit.startJobHum()
         shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(500))
+        // Zwei Toene mit Spitze 0,78 waeren zusammen 1,56 - bei 0,6 sind es
+        // 0,94 und damit unter der Vollaussteuerung. Und es muss fuer beide
+        // gelten, nicht nur fuer den ersten.
+        assertEquals(0.6f, SoundKit.humVolumeForTest(SoundKit.Hum.SCAN), 0.001f)
+        assertEquals(0.6f, SoundKit.humVolumeForTest(SoundKit.Hum.JOB), 0.001f)
         val both = SoundKit.humVolumeForTest(SoundKit.Hum.SCAN)
         assertTrue(
             "Beide Toene stehen bei $both - zusammen waeren sie lauter als einer plus Klick",

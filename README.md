@@ -430,9 +430,21 @@ eigenen Code.
   Medienlautstärke 0 bleibt es still, mit dem Vermerk
   `Medienlautstaerke ist 0`.
   **Ein Klick steht über dem Dauerton, nicht in ihm:** für die Dauer
-  des Klicks (200 ms) geht der Dauerton auf 0,22 seines Pegels zurück
+  des Klicks (200 ms) geht der Dauerton auf 0,19 seines Pegels zurück
   und danach wieder hoch — Summe aus 0,78 und 0,85 wäre sonst 1,63 und
-  damit über der Vollaussteuerung.
+  damit über der Vollaussteuerung. 0,19 ist die Obergrenze, nicht ein
+  Gefühlswert (0,85 + 0,78·0,19 = 0,998); laufen zwei Dauertöne, teilen
+  sie sich dieses Budget.
+  **Jede Schleife, die angehalten wird, wird auch wirklich angehalten.**
+  `stopHum` blendet 160 ms aus und schaltet erst im letzten Schritt ab;
+  ein zweiter Stopp in diesem Fenster ist folgenlos, und ein Neustart
+  hält den alten Strom sofort an. Vorher löschte ein zweiter Stopp
+  (im Normalbetrieb: `onStop` und `onDestroy` der Activity) die laufende
+  Ausblendung samt ihrem Abschalten — die Endlosschleife summte dann im
+  Hintergrund weiter. Der letzte Ausblendschritt schreibt außerdem
+  **0**, bevor er abschaltet; sonst würde der Strom bei 0,2 seiner
+  Lautstärke abgeschnitten (ein Sprung von −16 dBFS, also genau der
+  Knall, den die Ausblendung verhindern soll).
   Alle Töne des Scans und des Laufs folgen demselben Schalter: wer die
   Klicks abschaltet, hört weder Scan noch Lauf.
 * **Speicherwächter** (`MemoryGuard`): bewusst *eine* Datei nach der

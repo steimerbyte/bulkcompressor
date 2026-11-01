@@ -72,50 +72,57 @@ object SoundKit {
     private const val MIN_GAP_MS = 40L
 
     /**
-     * Der Dauerton ist auf einen Effektivwert von 0,12 normiert (-18
-     * dBFS), nicht auf eine Spitze wie die Klicks. Ein Ton, der eine
-     * Minute laeuft, wird nach dem Effektivwert beurteilt; mit 0,12 ist
-     * er rund 10 dB lauter als die erste Fassung, bleibt aber unter den
-     * Klicks. Deshalb volle Lautstaerke hier - die Hoer-Lautstaerke macht
-     * der Systemton-Regler.
+     * Der Dauerton ist auf **Spitze 0,78** normiert (-2,2 dBFS), der
+     * Klick auf 0,85. Die Lautstaerke kommt vom Medien-Regler: gespielt
+     * wird auf `STREAM_MUSIC` (siehe [ensurePool]), also von dem Regler,
+     * den die Seitentasten bewegen und den man mit "volle Lautstaerke"
+     * meint.
      */
     private const val HUM_VOLUME = 1.0f
 
     /**
-     * Einblendzeit. Der Ton hat seinen Spitzenwert bei 0,32, der
-     * Start-Klick bei 0,85 - beide gleichzeitig waeren 1,17 und damit
-     * ueber der Begrenzung. Sechs Schritte zu 40 ms machen aus dem
-     * Anlauf ausserdem einen dumpfen Ansatz statt eines Stosses.
+     * Einblendzeit: sechs Schritte zu 40 ms (der erste sofort, also
+     * insgesamt 200 ms). Der Spitzenwert 0,78 erreicht der Ton erst am
+     * Ende - der Start-Klick (0,85) findet ihn im Anlauf vor und nicht
+     * schon voll da. Six steps machen aus dem Anlauf ausserdem einen
+     * dumpfen Ansatz statt eines Stosses.
      */
     private const val HUM_FADE_IN_STEPS = 6
 
     /**
      * Ausblendzeit beim Ende des Scans. Ein tiefer Ton, der mitten in der
-     * Schwingung abgeschnitten wird, knallt; 200 ms reichen, um das zu
-     * vermeiden, ohne das Ende zu verschleppen.
+     * Schwingung abgeschnitten wird, knallt; 160 ms (vier Schritte, der
+     * erste sofort) reichen, um das zu vermeiden, ohne das Ende zu
+     * verschleppen. Der letzte Schritt schreibt **0**, bevor
+     * [SoundPool.stop] kommt - ohne ihn wuerde der Strom bei 0,2 der
+     * Lautstaerke abgeschnitten (ein Sprung von -16 dBFS).
      */
     private const val HUM_FADE_MS = 40L
     private const val HUM_FADE_STEPS = 5
 
     /**
      * Wenn beide Dauertoene gleichzeitig laufen (ein Scan waehrend eines
-     * Auftrags), bekommt jeder diesen Anteil: zwei Toene mit Spitze 0,31
-     * waeren zusammen 0,62 und liefen mit einem Klick darueber in die
-     * Begrenzung. Bei 0,7 bleibt jeder einzeln hoerbar, die Summe bleibt
-     * unter der des einzelnen Tons plus Klick.
+     * Auftrags), bekommt jeder diesen Anteil.
+     *
+     * Zwei Toene mit Spitze 0,78 waeren zusammen 1,56; bei 0,6 sind es
+     * 0,94 und damit unter der Vollaussteuerung. Hoeher geht nicht, ohne
+     * dass zwei gleichzeitige Toene clippen.
      */
-    private const val HUM_DUCK = 0.7f
+    private const val HUM_DUCK = 0.6f
 
     /**
      * Waehrend ein Klick erklingt, laeuft der Dauerton in diesem Anteil.
      *
-     * Der Dauerton hat Spitze 0,78, der Klick 0,85 - gleichzeitig waeren
+     * Der Klick hat Spitze 0,85, ein Dauerton 0,78 - gleichzeitig waeren
      * das 1,63 und damit weit ueber der Vollaussteuerung. Fuer die Dauer
      * des Klicks (hoechstens 180 ms) geht der Dauerton deshalb zurueck
      * und danach wieder hoch; das ist derselbe Trick wie eine
      * Sidechain-Kompression und faellt nur auf, wenn man darauf achtet.
+     *
+     * 0,19 ist die Obergrenze, nicht ein Gefuehlswert: 0,85 + 0,78·0,19
+     * = 0,998. Laufen zwei Dauertoene, teilen sie sich dieses Budget.
      */
-    private const val HUM_CLICK_DUCK = 0.22f
+    private const val HUM_CLICK_DUCK = 0.19f
     private const val HUM_CLICK_DUCK_MS = 200L
 
 
@@ -130,6 +137,21 @@ object SoundKit {
     private var lastReason: SoundPolicy.Reason? = null
 
     /** Noch nicht dekodierte Klicks: sie werden nach dem Laden nachgeholt. */
+    /**
+     * Wie oft ein Strom angehalten wurde. Nur fuer Tests: dass eine
+     * Endlosschleife, die einmal lief, auch wieder angehalten wird, ist
+     * die wichtigste Zusage dieses Objekts - und der Shadow von
+     * `SoundPool` zeichnet `stop()` nicht auf.
+     */
+    private var stops = 0
+
+    /** Haelt [stream] an und zaehlt das mit. */
+    private fun stopStream(stream: Int) {
+        if (stream == 0) return
+        stops++
+        runCatching { pool?.stop(stream) }
+    }
+
     private val loaded = HashSet<Int>()
     private val pending = HashMap<Click, Int>()
 
@@ -147,6 +169,17 @@ object SoundKit {
         var volume = 0f
         var wanted = false
         var ramp: Runnable? = null
+
+        /**
+         * Der Strom laeuft noch, wird aber gerade ausgeblendet.
+         *
+         * [stream] bleibt bis zum letzten Schritt gesetzt - genau deshalb:
+         * wuerde er sofort auf 0 gehen, koennte ein zweiter Stopp die
+         * laufende Ausblendung als "nichts zu tun" abloesen, und die
+         * Endlosschleife liefe danach fuer immer weiter. So ist [stream]
+         * die Wahrheit ueber den Strom, [stopping] die Absicht.
+         */
+        var stopping = false
     }
 
     private val humChannels: Map<Hum, HumChannel> =
@@ -318,7 +351,20 @@ object SoundKit {
      */
     private fun startHum(kind: Hum) {
         val channel = humChannels.getValue(kind)
-        if (channel.stream != 0 || channel.wanted) return
+        if (channel.stream != 0 && !channel.stopping) return
+        if (channel.stream != 0 && channel.stopping) {
+            // Der alte Strom wird gerade ausgeblendet. Er muss jetzt
+            // weichen: sonst liefe er als zweite Schleife derselben Datei
+            // weiter, waehrend der neue startet - doppelter Pegel, und
+            // die Pegelteilung zaehlte ihn nicht mit. Das harte Anhalten
+            // ist hier unhoerbar, der Ton steht schon unter 0,2.
+            cancelRamp(kind)
+            stopStream(channel.stream)
+            channel.stream = 0
+            channel.stopping = false
+            channel.volume = 0f
+        }
+        if (channel.wanted) return
         if (!mayPlay()) return
         if (channel.resId == 0) return
         // Noch nicht dekodiert: vormerken und im Lade-Callback anlaufen
@@ -359,20 +405,18 @@ object SoundKit {
     /**
      * Ende eines Dauertons: ausblenden, dann anhalten.
      *
-     * Der Strom wird sofort als beendet verbucht, damit ein neuer Start
-     * waehrend der 200 ms nicht uebersehen wird. Die Ausblendung laeuft
-     * ueber den Main-Looper; ein zweiter Aufruf waehrenddessen ist
-     * folgenlos.
+     * Die Ausblendung laeuft ueber den Main-Looper (160 ms). Ein zweiter
+     * Aufruf waehrenddessen ist **folgenlos** - er darf die Rampe nicht
+     * abloesen, weil in ihrem letzten Schritt das Anhalten steckt; genau
+     * das war der Fehler, der den Ton im Hintergrund weiterlaufen liess.
      */
     private fun stopHum(kind: Hum) {
         val channel = humChannels.getValue(kind)
         channel.wanted = false
         val stream = channel.stream
-        if (stream == 0) {
-            cancelRamp(kind)
-            return
-        }
-        channel.stream = 0
+        if (stream == 0) return
+        if (channel.stopping) return
+        channel.stopping = true
         // Von der aktuellen Lautstaerke aus ausblenden: bricht ein Lauf
         // 60 ms nach dem Start ab, steht der Ton noch beim Anlaufwert -
         // von der Ziel-Lautstaerke aus zu rechnen waere ein Sprung nach
@@ -380,7 +424,7 @@ object SoundKit {
         rampHum(kind, stream, channel.volume, 0f, HUM_FADE_STEPS, thenStop = true)
         // Der andere laeuft jetzt allein und bekommt den Pegel zurueck.
         humChannels.forEach { (other, running) ->
-            if (other != kind && running.stream != 0) {
+            if (other != kind && running.stream != 0 && !running.stopping) {
                 rampHum(other, running.stream, running.volume, targetVolume(), HUM_FADE_STEPS)
             }
         }
@@ -388,7 +432,11 @@ object SoundKit {
 
     /** Lautstaerke, die ein laufender Ton haben soll. */
     private fun targetVolume(): Float =
-        if (humChannels.values.count { it.stream != 0 } >= 2) HUM_VOLUME * HUM_DUCK else HUM_VOLUME
+        if (humChannels.values.count { it.stream != 0 && !it.stopping } >= 2) {
+            HUM_VOLUME * HUM_DUCK
+        } else {
+            HUM_VOLUME
+        }
 
     /**
      * Blendet einen Strom von [from] auf [to] und haelt ihn dort (oder
@@ -408,7 +456,6 @@ object SoundKit {
     ) {
         val channel = humChannels.getValue(kind)
         cancelRamp(kind)
-        val soundPool = pool ?: return
         val handler = fadeHandler ?: Handler(Looper.getMainLooper()).also { fadeHandler = it }
         var step = 0
         val runnable = object : Runnable {
@@ -416,13 +463,22 @@ object SoundKit {
                 step++
                 val done = step >= steps
                 val volume = if (done) to else from + (to - from) * step.toFloat() / steps
-                channel.volume = volume
+                // Auch den letzten Schritt noch schreiben: ohne diese Zeile
+                // wuerde ein ausgeblendeter Strom bei 0,2 seiner Lautstaerke
+                // abgeschnitten - ein Sprung von -16 dBFS, also genau der
+                // Knall, den die Ausblendung verhindern soll.
+                runCatching { pool?.setVolume(stream, volume, volume) }
+                if (stream == channel.stream) channel.volume = volume
                 if (thenStop && done) {
-                    runCatching { soundPool.stop(stream) }
+                    stopStream(stream)
+                    if (stream == channel.stream) {
+                        channel.stream = 0
+                        channel.stopping = false
+                        channel.volume = 0f
+                    }
                     channel.ramp = null
                     return
                 }
-                runCatching { soundPool.setVolume(stream, volume, volume) }
                 if (done) channel.ramp = null else handler.postDelayed(this, HUM_FADE_MS)
             }
         }
@@ -440,19 +496,22 @@ object SoundKit {
      * Normalfall (ein Klick beim Tippen).
      */
     private fun duckHumsForClick() {
-        if (humChannels.values.none { it.stream != 0 }) return
+        val running = humChannels.filter { it.value.stream != 0 && !it.value.stopping }
+        if (running.isEmpty()) return
         val handler = fadeHandler ?: Handler(Looper.getMainLooper()).also { fadeHandler = it }
-        humChannels.forEach { (kind, channel) ->
-            if (channel.stream != 0) {
-                rampHum(kind, channel.stream, channel.volume, targetVolume() * HUM_CLICK_DUCK, 1)
-            }
+        // Ein Budget fuer alle: 0,85 + 0,78·0,19 = 0,998. Es auf die Zahl
+        // der laufenden Toene zu verteilen ist der einzige Weg, der auch
+        // dann haelt, wenn beide gleichzeitig laufen.
+        val perHum = HUM_CLICK_DUCK / running.size
+        running.forEach { (kind, channel) ->
+            rampHum(kind, channel.stream, channel.volume, channel.volume * perHum, 1)
         }
         clickDuckRestore?.let { handler.removeCallbacks(it) }
         val restore = Runnable {
             clickDuckRestore = null
             humChannels.forEach { (kind, channel) ->
-                if (channel.stream != 0) {
-                    rampHum(kind, channel.stream, channel.volume, targetVolume(), 2)
+                if (channel.stream != 0 && !channel.stopping) {
+                    rampHum(kind, channel.stream, channel.volume, targetVolume(), 4)
                 }
             }
         }
@@ -508,7 +567,11 @@ object SoundKit {
     internal fun audioForTest(): AudioManager? = audio
 
     /** Nur fuer Tests: laeuft gerade ein Schleifen-Strom? */
-    internal fun humPlayingForTest(kind: Hum): Boolean = humChannels.getValue(kind).stream != 0
+    internal fun humPlayingForTest(kind: Hum): Boolean =
+        humChannels.getValue(kind).let { it.stream != 0 && !it.stopping }
+
+    /** Nur fuer Tests: wie oft ein Strom angehalten wurde. */
+    internal fun stopCountForTest(): Int = stops
 
     /** Nur fuer Tests: aktuelle Lautstaerke eines Schleifen-Stroms. */
     internal fun humVolumeForTest(kind: Hum): Float = humChannels.getValue(kind).volume
@@ -526,6 +589,7 @@ object SoundKit {
         humChannels.forEach { (kind, channel) ->
             cancelRamp(kind)
             channel.stream = 0
+            channel.stopping = false
             channel.wanted = false
             channel.volume = 0f
         }

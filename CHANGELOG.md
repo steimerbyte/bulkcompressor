@@ -41,8 +41,32 @@ nach [SemVer](https://semver.org/lang/de/).
 
 - **Ein Klick senkt den Dauerton ab.** Mit Spitze 0,78 plus Klick bei
   0,85 wären es 1,63 und damit über der Vollaussteuerung. Für die Dauer
-  des Klicks (200 ms) geht der Dauerton auf 0,22 zurück und danach
-  wieder hoch — derselbe Trick wie eine Sidechain-Kompression.
+  des Klicks (200 ms) geht der Dauerton auf 0,19 zurück und danach
+  wieder hoch — derselbe Trick wie eine Sidechain-Kompression. 0,19 ist
+  die Obergrenze (0,85 + 0,78·0,19 = 0,998); laufen zwei Dauertöne,
+  teilen sie sich dieses Budget.
+- **Ein zweiter Stopp ließ die Schleife weiterlaufen.** `stopHum` blendet
+  160 ms aus und schaltet erst im letzten Schritt ab, hatte den Strom
+  aber sofort als beendet verbucht — ein zweiter Stopp in diesem
+  Fenster löste die laufende Rampe ab, und der Schritt, der abschaltet,
+  fiel mit weg. Die Endlosschleife (loop −1) lief danach für die
+  Lebensdauer des Prozesses weiter. Ausgelöst wurde das im
+  Normalbetrieb: `onStop` **und** `onDestroy` der Activity rufen beide
+  `stopJobHum()`. Jetzt bleibt der Strom bis zum Ende der Ausblendung
+  verbucht (`stopping`), ein zweiter Stopp ist folgenlos.
+- **Ein Neustart während der Ausblendung ließ den alten Strom stehen.**
+  Verlässt man die App und kommt sofort zurück, fällt `onResume` in die
+  160 ms; der alte Strom lief dann als zweite Schleife derselben Datei
+  parallel zum neuen, und die Pegelteilung zählte nur einen. Der alte
+  Strom wird jetzt sofort angehalten (hörbar nicht, er steht schon unter
+  0,2).
+- **Die Ausblendung schnitt bei 20 % ab.** Der letzte Schritt setzte nur
+  den Buchhaltungswert auf 0 und schaltete ab, ohne 0 noch an
+  `setVolume` zu geben — jeder Scan- und jeder Auftragston endete mit
+  einem Sprung von −16 dBFS, also genau dem Knall, den die Ausblendung
+  verhindern soll.
+- **Zwei gleichzeitige Dauertöne clippten.** Bei 0,7 je Ton waren es
+  0,78·0,7·2 = 1,09 Spitze; jetzt 0,6 je Ton (0,94).
 
 ### Geändert
 

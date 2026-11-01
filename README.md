@@ -156,6 +156,43 @@ Zeitstempel liegen, und die neue Datei erbt über EXIF die Aufnahmezeit.
 Wer in-place ersetzen will und die Chronologie braucht, schaltet den
 Zugriff ein.
 
+## Marker, Wiederholung, Prüfung
+
+**Derselbe Ordner, zweites Mal** — der häufigste Fehler bei einem
+Bulk-Kompressor ist, dass ein zweiter Lauf alles noch einmal verlustbehaftet
+durch die Mühle schickt. Deshalb schreibt die App nach jedem Lauf einen
+Marker **in die Datei selbst**, nicht in eine Liste der App:
+
+| Container | Ablage |
+|---|---|
+| JPEG, PNG, WebP | EXIF `UserComment` |
+| MP4, M4V, MOV | eigene `uuid`-Box am Dateiende (ISO/IEC 14496-12) |
+
+```
+nothing-bulk:1 runs=2 src=4194304 out=1048576 at=1762000000 app=1.7.0
+```
+
+Der Marker überlebt Neuinstallation, anderen Dateimanager und anderen
+Ordner. Beim nächsten Lauf steht in der Dateiliste **SCHON KOMPRIMIERT**,
+und solche Dateien werden übersprungen. Wer den ersten Lauf zu schwach
+eingestellt hatte, schaltet **„Bereits komprimierte erneut bearbeiten"**
+ein — dann läuft die Datei noch einmal, und `runs` zählt hoch.
+
+Ein vorhandener Fremdkommentar bleibt erhalten; der Marker wird davor
+gesetzt. `UserComment` und nicht `ImageDescription`, weil Kameras den
+letzteren mit eigenem Text belegen.
+
+**Prüfung jeder Ausgabe.** Vor dem Schreiben wird die erzeugte Datei
+geprüft: Dateikopf gegen das zugesagte Format, Box-Tabelle bei MP4,
+Dekodierbarkeit der Bilddaten, Marker vorhanden. Erst danach wandert sie
+an ihren Platz. Bei „Original ersetzen" wird zusätzlich die Datei **an
+ihrem Platz** geprüft (Container, Größe, Marker, Video-Spur über den
+echten `MediaExtractor`) — schlägt das fehl, wird das Original aus der
+Rückfallebene zurückgeschrieben. Im Modus „Original behalten" wird eine
+beanstandete neue Datei wieder entfernt, statt sie als Erfolg zu zählen.
+Was geprüft wurde, steht als Zeile im Protokoll
+(`Ausgabe geprüft: 763 B · image/jpeg · 16x8 · runs=1`).
+
 ## Berechtigungen
 
 | Berechtigung | Wofür |

@@ -4,6 +4,35 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.7.0] – 2026-11-01
+
+### Neu
+
+- **Marker in den Metadaten jeder bearbeiteten Datei.** Ein zweiter Lauf
+  über denselben Ordner komprimiert nichts mehr doppelt: die Datei trägt
+  `nothing-bulk:1 runs=… out=…` (EXIF `UserComment` bei Bildern, eigene
+  `uuid`-Box am Dateiende bei MP4), wird in der Liste als **SCHON
+  KOMPRIMIERT** angezeigt und übersprungen. Der Marker überlebt
+  Neuinstallation und fremde Dateimanager, weil er in der Datei steht.
+  Fremder Kommentartext bleibt erhalten.
+- **Schalter „Bereits komprimierte erneut bearbeiten"** für den Fall,
+  dass der erste Lauf zu schwach war; `runs` zählt dann hoch.
+- **Prüfung jeder Ausgabe vor dem Schreiben** (`Verifier`): Dateikopf
+  gegen das zugesagte Format, Box-Tabelle bei MP4, Dekodierbarkeit der
+  Bilddaten, Marker. Eine beanstandete Datei wird verworfen, das Original
+  bleibt unangetastet.
+- **Prüfung nach dem Schreiben** an der abgelegten Datei (Container,
+  Größe, Marker, Video-Spur über `MediaExtractor`). Bei „Original
+  ersetzen" hängt sie in der Rückfallebene: ein Befund schreibt das
+  Original zurück. Bei „Original behalten" wird die kaputte neue Datei
+  entfernt.
+
+### Behoben
+
+- `CompressionJob` meldete für neue Dateien Erfolg, ohne den Inhalt der
+  geschriebenen Datei je gelesen zu haben — Größe allein hätte einen
+  Container mit richtiger Länge und kaputtem Rest durchgelassen.
+
 ## [1.6.1] – 2026-10-31
 
 ### Geändert

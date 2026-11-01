@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
+import com.steimerbyte.bulkcompressor.BuildConfig
 import com.steimerbyte.bulkcompressor.engine.ImageCompressor
 import com.steimerbyte.bulkcompressor.engine.JobCancelledException
 import com.steimerbyte.bulkcompressor.engine.MemoryGuard
@@ -16,6 +17,10 @@ import com.steimerbyte.bulkcompressor.engine.Naming
 import com.steimerbyte.bulkcompressor.engine.PresetEngine
 import com.steimerbyte.bulkcompressor.engine.VideoPlan
 import com.steimerbyte.bulkcompressor.engine.VideoTranscoder
+import com.steimerbyte.bulkcompressor.engine.tag.CompressionTag
+import com.steimerbyte.bulkcompressor.engine.tag.TagFile
+import com.steimerbyte.bulkcompressor.engine.tag.TagStore
+import com.steimerbyte.bulkcompressor.engine.verify.Verifier
 import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.model.CompressSettings
 import com.steimerbyte.bulkcompressor.model.MediaItem
@@ -68,6 +73,12 @@ class CompressionJob(
 
     /** Begruendung des letzten Fehlschlags fuer das Journal. */
     private var failureReason: String = ""
+
+    /** Marker der aktuellen Quelldatei, `null` wenn sie unmarkiert ist. */
+    private var sourceTag: CompressionTag? = null
+
+    /** Marker-Leser fuer Dokumente; erst bei Bedarf angelegt. */
+    private val tagStore: TagStore by lazy { TagStore(context.contentResolver) }
 
     fun run() {
         runStartedAt = System.currentTimeMillis()
@@ -130,6 +141,27 @@ class CompressionJob(
             if (!ensureStorage(item, index, work.size)) {
                 storageStopped = true
                 break
+            }
+            // Marker unmittelbar vor der Datei lesen, nicht aus dem Scan
+            // uebernehmen: zwischen Ordnerauswahl und Start kann ein
+            // anderer Lauf dieselbe Datei erwischt haben.
+            if (!settings.ignoreCompressionTag) {
+                val existing = tagStore.read(item.uri)
+                if (existing != null) {
+                    skipped++
+                    logLine(
+                        "SKIP ${item.displayName}: bereits komprimiert (${existing.describe()})"
+                    )
+                    Log.i(
+                        "Job",
+                        "uebersprungen: ${item.displayName} · Grund: Marker vorhanden" +
+                            " (${existing.describe()}) · Einstellung: Marker beachten" +
+                            " · ${formatSize(item.sizeBytes)}"
+                    )
+                    journal?.mark(item.docId, RunJournal.Result.SKIP, item.sizeBytes, 0, "bereits komprimiert")
+                    done = index + 1
+                    continue
+                }
             }
             // Vor jeder Datei: bei Speicherdruck warten, statt den Prozess
             // deswegen zu verlieren.
@@ -396,11 +428,15 @@ class CompressionJob(
                 "${settings.bitratePercent}% Bitrate + ${settings.videoShortEdge}p"
         }
         val output = if (settings.outputMode == OutputMode.OVERWRITE) "Original ersetzen" else "Original behalten"
-        return "$video, Bilder Q${settings.imageQuality}, $output"
+        val marker = if (settings.ignoreCompressionTag) "Marker ignorieren" else "Marker beachten"
+        return "$video, Bilder Q${settings.imageQuality}, $output, $marker"
     }
 
     private fun process(item: MediaItem, index: Int) {
         fileStartedAt = System.currentTimeMillis()
+        // Der Marker wird hier gehalten, damit [deliver] den Lauf-Zaehler
+        // fortschreiben kann, statt bei 1 zu beginnen.
+        sourceTag = tagStore.read(item.uri)
         val temp = File(context.cacheDir, "bulk_${System.currentTimeMillis()}.tmp")
         try {
             when (item.kind) {
@@ -565,6 +601,21 @@ class CompressionJob(
     // Ablage
     // ------------------------------------------------------------------
 
+    /**
+     * Prueft eine abgelegte Datei: Container, Groesse, Marker und bei
+     * Videos die Spur. Die Spur-Pruefung geht ueber den echten Extraktor -
+     * ein Container, den er nicht oeffnen kann, ist kaputt, egal was der
+     * Muxer beim Schreiben gemeldet hat.
+     */
+    private fun verifyAtPlace(uri: Uri, mime: String, expectedBytes: Long) = Verifier.verifyDocument(
+        resolver = resolver,
+        uri = uri,
+        expectMime = mime,
+        expectedBytes = expectedBytes,
+        expectTag = true,
+        probeTracks = { Verifier.trackProblem(resolver, it) }
+    )
+
     private fun deliver(
         item: MediaItem,
         temp: File,
@@ -599,6 +650,45 @@ class CompressionJob(
             return
         }
 
+        // Marker schreiben, bevor die Datei an ihren Platz geht: danach ist
+        // die Datei in der Galerie und darf nicht mehr halbfertig sein.
+        val tag = CompressionTag(
+            runs = (sourceTag?.runs ?: 0) + 1,
+            // Bei einem zweiten Lauf ist die "Quelle" das Original von
+            // damals - sonst wuerde die Historie bei jedem Lauf auf die
+            // zuletzt gelesene Groesse zusammenschrumpfen.
+            sourceBytes = sourceTag?.sourceBytes?.takeIf { it > 0 } ?: item.sizeBytes,
+            resultBytes = after,
+            atMillis = System.currentTimeMillis(),
+            appVersion = BuildConfig.VERSION_NAME
+        )
+        val tagProblem = TagFile.write(temp, tag)
+        if (tagProblem != null) {
+            failed++
+            logLine("FEHLER ${item.displayName}: Marker nicht schreibbar ($tagProblem) - Datei unangetastet")
+            Log.e(
+                "Job",
+                "fehlgeschlagen: ${item.displayName} · Marker nicht schreibbar: $tagProblem" +
+                    " · Quelle unveraendert · ${formatSize(after)} Ergebnis verworfen"
+            )
+            return
+        }
+        val report = Verifier.verifyFile(temp, mime, expectTag = true)
+        if (!report.passed) {
+            failed++
+            logLine("FEHLER ${item.displayName}: Pruefung der Ausgabe (${report.reason()}) - Datei unangetastet")
+            Log.e(
+                "Job",
+                "fehlgeschlagen: ${item.displayName} · Pruefung der Ausgabe: ${report.reason()}" +
+                    " · Quelle unveraendert · Ergebnis ${formatSize(after)} verworfen"
+            )
+            return
+        }
+        Log.i(
+            "Job",
+            "${item.displayName} · Ausgabe geprueft: ${report.summary()} · Marker ${tag.describe()}"
+        )
+
         val replaceInPlace = settings.outputMode == OutputMode.OVERWRITE && inPlaceSafe
         val target: Uri?
         if (replaceInPlace) {
@@ -614,9 +704,11 @@ class CompressionJob(
                 payload = temp,
                 sourceSize = item.sizeBytes,
                 expectedSize = after,
-                label = item.displayName
+                label = item.displayName,
+                verifyTarget = { verifyAtPlace(item.uri, mime, after).reason() }
             )) {
-                is SafeReplace.Outcome.Written -> Unit
+                is SafeReplace.Outcome.Written ->
+                    Log.i("Job", "${item.displayName} · Inhalt am Platz geprueft ($mime, ${formatSize(after)})")
                 is SafeReplace.Outcome.Restored -> {
                     failed++
                     logLine(
@@ -664,6 +756,27 @@ class CompressionJob(
             )
             writeDocument(target, temp)
             rememberInFolder(item.parentId, unique)
+            // Bei einer neuen Datei ist eine Beanstandung kein Datenverlust,
+            // aber eine kaputte Datei in der Galerie. Sie wird entfernt,
+            // statt sie als Erfolg zu zaehlen.
+            val written = verifyAtPlace(target, mime, after)
+            Log.i("Job", "${item.displayName} · neue Datei geprueft: ${written.summary()}")
+            if (!written.passed) {
+                val removed = runCatching { DocumentsContract.deleteDocument(resolver, target) }
+                    .getOrDefault(false)
+                failed++
+                logLine(
+                    "FEHLER ${item.displayName}: geschriebene Datei ist nicht in Ordnung" +
+                        " (${written.reason()})" +
+                        if (removed) " - sie wurde wieder entfernt" else " - bitte von Hand loeschen"
+                )
+                Log.e(
+                    "Job",
+                    "fehlgeschlagen: ${item.displayName} · Pruefung am Ziel: ${written.reason()}" +
+                        " · entfernt=$removed · Original unveraendert"
+                )
+                return
+            }
         }
 
         if (settings.keepTimestamps) {

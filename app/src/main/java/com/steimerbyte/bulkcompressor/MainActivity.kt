@@ -86,6 +86,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private lateinit var markTimestamps: TextView
     private lateinit var markExif: TextView
     private lateinit var markSound: TextView
+    private lateinit var markRetag: TextView
     private lateinit var textAccessHint: TextView
     private lateinit var buttonAccess: Button
     private lateinit var groupProgress: LinearLayout
@@ -288,6 +289,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         markTimestamps = findViewById(R.id.mark_timestamps)
         markExif = findViewById(R.id.mark_exif)
         markSound = findViewById(R.id.mark_sound)
+        markRetag = findViewById(R.id.mark_retag)
         textAccessHint = findViewById(R.id.text_access_hint)
         buttonAccess = findViewById(R.id.button_access)
         groupProgress = findViewById(R.id.group_progress)
@@ -442,6 +444,11 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             settings = settings.copy(keepExif = !settings.keepExif)
             afterSettingsChanged()
         }
+        findViewById<View>(R.id.row_retag).setOnClickListener {
+            SoundKit.play(SoundKit.Click.TOGGLE)
+            settings = settings.copy(ignoreCompressionTag = !settings.ignoreCompressionTag)
+            afterSettingsChanged()
+        }
         findViewById<View>(R.id.row_sound).setOnClickListener {
             settings = settings.copy(clickSounds = !settings.clickSounds)
             // Erst umschalten, dann klicken - beim Abschalten hoert man
@@ -484,6 +491,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         append(" · Zeitstempel ").append(if (settings.keepTimestamps) "behalten" else "neu")
         append(" · EXIF/GPS ").append(if (settings.keepExif) "behalten" else "verwerfen")
         append(" · Klick ").append(if (settings.clickSounds) "an" else "aus")
+        append(" · Marker ").append(if (settings.ignoreCompressionTag) "ignorieren" else "beachten")
     }
 
     private fun renderValues() {
@@ -492,6 +500,9 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
         renderToggle(markTimestamps, settings.keepTimestamps)
         renderToggle(markExif, settings.keepExif)
         renderToggle(markSound, settings.clickSounds)
+        // Der Schalter heisst "erneut bearbeiten" - eingeschaltet heisst
+        // also: Marker ignorieren.
+        renderToggle(markRetag, settings.ignoreCompressionTag)
         textHint.setText(
             if (settings.outputMode == OutputMode.OVERWRITE) R.string.output_hint_overwrite
             else R.string.output_hint_keep
@@ -702,12 +713,15 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             textSummary.text = getString(R.string.scan_empty)
             listMedia.visibility = View.GONE
         } else {
+            val tagged = result.items.count { it.taggedCompressed }
+            val truncatedNote = if (result.truncated) getString(R.string.scan_truncated) else ""
+            val taggedNote = if (tagged > 0) getString(R.string.scan_tagged, tagged) else ""
             textSummary.text = getString(
                 R.string.scan_summary,
                 result.videos.size,
                 result.images.size,
                 CompressionJob.formatSize(result.totalBytes)
-            ) + if (result.truncated) getString(R.string.scan_truncated) else ""
+            ) + truncatedNote + taggedNote
             listMedia.visibility = View.VISIBLE
         }
         adapter.submit(result.items, selectedIds)

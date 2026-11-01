@@ -23,8 +23,8 @@ android {
         // braucht nicht mehr als MediaCodec + MediaMuxer (API 18+).
         minSdk = 24
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.6.1"
+        versionCode = 12
+        versionName = "1.7.0"
     }
 
     signingConfigs {
@@ -38,6 +38,12 @@ android {
             enableV2Signing = true
             enableV3Signing = true
         }
+    }
+
+    buildFeatures {
+        // Der Marker schreibt die App-Version in die Metadaten der Datei -
+        // dafuer braucht es BuildConfig, das AGP nicht mehr von allein baut.
+        buildConfig = true
     }
 
     buildTypes {

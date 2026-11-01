@@ -67,7 +67,8 @@ class SafeReplaceTest {
         document: FakeDocument,
         payload: File,
         expectedSize: Long,
-        freeSpace: Long = 1024L * 1024 * 1024
+        freeSpace: Long = 1024L * 1024 * 1024,
+        verify: String? = null
     ) = SafeReplace(temp.root, freeSpace = { freeSpace }).replaceCore(
         payload = payload,
         sourceSize = document.bytes.size.toLong(),
@@ -75,7 +76,8 @@ class SafeReplaceTest {
         label = "test.mp4",
         openOriginalInput = { document.openInput() },
         openOriginalOutput = { document.openOutput() },
-        sizeOfTarget = { document.bytes.size.toLong() }
+        sizeOfTarget = { document.bytes.size.toLong() },
+        verifyTarget = { verify }
     )
 
     @Test
@@ -161,5 +163,14 @@ class SafeReplaceTest {
         assertTrue("Cache darf keine Sicherung behalten", after <= before + 1)
         val backups = temp.root.listFiles()?.filter { it.name.endsWith(".bak") }.orEmpty()
         assertTrue("Sicherungen uebrig: $backups", backups.isEmpty())
+    }
+
+    @Test
+    fun `Beanstandete Pruefung stellt das Original wieder her`() {
+        val document = FakeDocument("original".toByteArray())
+        val outcome = replace(document, payload("neu"), expectedSize = 3, verify = "kein ftyp an Offset 4")
+
+        assertTrue(outcome is SafeReplace.Outcome.Restored)
+        assertEquals("original", document.bytes.decodeToString())
     }
 }

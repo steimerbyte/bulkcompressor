@@ -5,6 +5,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.provider.DocumentsContract
 import com.steimerbyte.bulkcompressor.engine.Naming
+import com.steimerbyte.bulkcompressor.engine.tag.TagStore
 import com.steimerbyte.bulkcompressor.log.Log
 import com.steimerbyte.bulkcompressor.model.MediaItem
 import com.steimerbyte.bulkcompressor.model.MediaKind
@@ -23,7 +24,19 @@ class SafScanner(private val resolver: ContentResolver) {
 
     data class Progress(val folders: Int, val files: Int)
 
-    fun scan(treeUri: Uri, onProgress: (Progress) -> Unit = {}): ScanResult {
+    /**
+     * @param probeTags Marker "schon komprimiert" lesen. Der Ordner-Scan
+     *                  der Oberflaeche braucht das fuer die Anzeige vor dem
+     *                  Start; der Scan des Dienstes laesst es weg, weil der
+     *                  Lauf den Marker ohnehin unmittelbar vor jeder Datei
+     *                  erneut liest und ein zweiter Lesezugriff je Datei
+     *                  nur Zeit kostet.
+     */
+    fun scan(
+        treeUri: Uri,
+        probeTags: Boolean = true,
+        onProgress: (Progress) -> Unit = {}
+    ): ScanResult {
         val root = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }
         val rootId = root.getOrNull()
         if (rootId == null) {
@@ -47,6 +60,10 @@ class SafScanner(private val resolver: ContentResolver) {
         var unreadableFolders = 0
         var foldersOverLimit = 0
         var truncated = false
+        var tagged = 0
+        // Ein Resolver genuegt: der Store haelt keinen Zustand, nur den Weg
+        // zum Provider.
+        val tags = if (probeTags) TagStore(resolver) else null
 
         while (queue.isNotEmpty()) {
             if (folders >= MAX_FOLDERS || items.size >= MAX_FILES) {
@@ -97,16 +114,20 @@ class SafScanner(private val resolver: ContentResolver) {
                         truncated = true
                         break
                     }
+                    val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, child.documentId)
+                    val tag = tags?.read(uri)
+                    if (tag != null) tagged++
                     items.add(
                         MediaItem(
-                            uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, child.documentId),
+                            uri = uri,
                             docId = child.documentId,
                             parentId = folderId,
                             displayName = child.name,
                             mime = child.mime,
                             sizeBytes = child.size,
                             lastModified = child.lastModified,
-                            kind = kind
+                            kind = kind,
+                            taggedCompressed = tag != null
                         )
                     )
                     if (kind == MediaKind.VIDEO) folderVideos++ else folderImages++
@@ -130,6 +151,8 @@ class SafScanner(private val resolver: ContentResolver) {
         items.sortWith(compareBy({ it.kind }, { it.displayName.lowercase() }))
         val videos = items.count { it.kind == MediaKind.VIDEO }
         val bytes = items.sumOf { it.sizeBytes }
+        val tagNote = if (probeTags) " · $tagged bereits komprimiert (Marker)" else ""
+        val truncNote = if (truncated) " · durch Grenze abgeschnitten" else ""
         Log.i(
             "Scan",
             "Fertig: $folders Ordner · $videos Videos · ${items.size - videos} Bilder · $bytes B" +
@@ -137,10 +160,11 @@ class SafScanner(private val resolver: ContentResolver) {
                 " · $skipped uebersprungen" +
                 " (davon $skippedNoType ohne Medien-Typ, $skippedZeroBytes mit 0 B," +
                 " $entriesWithoutMime ohne MIME)" +
+                tagNote +
                 " · $unreadableFolders Ordner nicht lesbar" +
                 " · $foldersOverLimit Unterordner wegen der Ordnergrenze nicht gelesen" +
                 " · $elapsed ms Laufzeit" +
-                if (truncated) " · durch Grenze abgeschnitten" else ""
+                truncNote
         )
         if (truncated) {
             Log.w(

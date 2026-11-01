@@ -197,7 +197,10 @@ class CompressionService : Service(), JobBus.Listener {
                 // Zeitstempel und Ordnerzuordnung auch dann, wenn
                 // zwischendurch etwas geaendert wurde.
                 val scanStartedAt = System.currentTimeMillis()
-                val scan = SafScanner(contentResolver).scan(treeUri)
+                // Marker hier nicht lesen: der Lauf prueft ihn unmittelbar
+                // vor jeder Datei erneut, ein zweiter Lesezugriff je Datei
+                // waere nur zusaetzliche Zeit.
+                val scan = SafScanner(contentResolver).scan(treeUri, probeTags = false)
                 val wanted = docIds.toHashSet()
                 val items = scan.items.filter { it.docId in wanted }
                 Log.i(

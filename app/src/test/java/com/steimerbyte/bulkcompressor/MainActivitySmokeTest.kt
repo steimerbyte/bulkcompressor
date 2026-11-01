@@ -170,6 +170,8 @@ class MainActivitySmokeTest {
         activity.findViewById<View>(R.id.row_exif).performClick()
         activity.findViewById<View>(R.id.row_sound).performClick()
         activity.findViewById<View>(R.id.row_sound).performClick()
+        activity.findViewById<View>(R.id.row_retag).performClick()
+        activity.findViewById<View>(R.id.row_retag).performClick()
 
         val modeChips = activity.findViewById<LinearLayout>(R.id.chip_row_mode)
         modeChips.getChildAt(1).performClick()
@@ -314,5 +316,28 @@ class MainActivitySmokeTest {
         // Lauf trotzdem - er ist gelaufen.
         assertEquals(View.GONE, activity.findViewById<View>(R.id.group_stats_saved).visibility)
         assertEquals(View.VISIBLE, activity.findViewById<TextView>(R.id.text_total_saved).visibility)
+    }
+
+    @Test
+    fun `Schalter fuer erneutes Bearbeiten kippt die Einstellung und bleibt gespeichert`() {
+        val activity = activity()
+        val prefs = activity.getSharedPreferences(CompressSettings.PREFS, Context.MODE_PRIVATE)
+        assertFalse("Vorgabe muss sein: Marker beachten", CompressSettings.load(prefs).ignoreCompressionTag)
+
+        activity.findViewById<View>(R.id.row_retag).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertTrue(
+            "Klick auf den Schalter muss die Einstellung umlegen",
+            CompressSettings.load(prefs).ignoreCompressionTag
+        )
+        val mark = activity.findViewById<TextView>(R.id.mark_retag)
+        assertEquals("Schalter muss den neuen Zustand zeigen", "\u25A0", mark.text.toString())
+
+        // Ein zweiter Klick muss zurueckfallen - ein Schalter, der nur in
+        // eine Richtung kippt, waere schlimmer als keiner.
+        activity.findViewById<View>(R.id.row_retag).performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(CompressSettings.load(prefs).ignoreCompressionTag)
     }
 }

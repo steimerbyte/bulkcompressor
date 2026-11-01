@@ -54,6 +54,11 @@ class SafeReplace(
      *
      * @param sourceSize Groesse des Originals; 0, wenn unbekannt.
      * @param expectedSize Groesse, die das Ziel danach haben muss.
+     * @param verifyTarget Inhaltliche Pruefung nach dem Schreiben:
+     *        `null`, wenn das Ziel in Ordnung ist, sonst den Grund. Ein
+     *        Befund hier fuehrt zum Zurueckschreiben des Originals - die
+     *        Groesse allein reicht nicht, weil ein Container mit richtiger
+     *        Laenge und kaputtem Rest sie erfuellt.
      */
     fun replace(
         resolver: ContentResolver,
@@ -61,7 +66,8 @@ class SafeReplace(
         payload: File,
         sourceSize: Long,
         expectedSize: Long,
-        label: String
+        label: String,
+        verifyTarget: () -> String?
     ): Outcome = replaceCore(
         payload = payload,
         sourceSize = sourceSize,
@@ -69,7 +75,8 @@ class SafeReplace(
         label = label,
         openOriginalInput = { resolver.openInputStream(target) },
         openOriginalOutput = { openWritable(resolver, target) },
-        sizeOfTarget = { sizeOf(resolver, target) }
+        sizeOfTarget = { sizeOf(resolver, target) },
+        verifyTarget = verifyTarget
     )
 
     /**
@@ -85,7 +92,8 @@ class SafeReplace(
         label: String,
         openOriginalInput: () -> InputStream?,
         openOriginalOutput: () -> OutputStream?,
-        sizeOfTarget: () -> Long
+        sizeOfTarget: () -> Long,
+        verifyTarget: () -> String?
     ): Outcome {
         val backup = prepareBackup(openOriginalInput, sourceSize, label)
         val reason = try {
@@ -95,7 +103,7 @@ class SafeReplace(
                 written <= 0 -> "es wurden keine Bytes geschrieben"
                 actual >= 0 && expectedSize > 0 && actual != expectedSize ->
                     "Groesse nach dem Schreiben $actual statt $expectedSize"
-                else -> null
+                else -> verifyTarget()?.let { "Inhalt: $it" }
             }
         } catch (t: Throwable) {
             "Schreiben fehlgeschlagen: ${t.message ?: t.javaClass.simpleName}"

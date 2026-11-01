@@ -65,6 +65,9 @@ class MediaAdapter(
                 append(" · ")
                 append(DATE_FORMAT.format(java.util.Date(item.lastModified)))
             }
+            // Ein Marker in der Zeile, damit man vor dem Start sieht, was
+            // bei der Einstellung "Marker beachten" uebersprungen wuerde.
+            if (item.taggedCompressed) append(" · SCHON KOMPRIMIERT")
         }
         holder.size.text = CompressionJob.formatSize(item.sizeBytes)
         holder.itemView.setOnClickListener {

@@ -21,7 +21,17 @@ data class MediaItem(
     val mime: String,
     val sizeBytes: Long,
     val lastModified: Long,
-    val kind: MediaKind
+    val kind: MediaKind,
+    /**
+     * Steht ein "schon komprimiert"-Marker in den Metadaten?
+     *
+     * Der Wert kommt aus dem Ordner-Scan und dient der Anzeige: er sagt
+     * vor dem Start, wie viele Dateien uebersprungen wuerden. Verbindlich
+     * ist er nicht - der Lauf liest den Marker unmittelbar vor jeder
+     * Datei erneut, weil zwischen Scan und Start ein anderer Lauf
+     * dieselbe Datei erwischt haben kann.
+     */
+    val taggedCompressed: Boolean = false
 ) {
     val extension: String
         get() = displayName.substringAfterLast('.', "").lowercase()
@@ -63,7 +73,16 @@ data class CompressSettings(
     val keepTimestamps: Boolean = true,
     val keepExif: Boolean = true,
     /** Klickgeraeusche bei Knoepfen, Schaltern und Slidern. */
-    val clickSounds: Boolean = true
+    val clickSounds: Boolean = true,
+    /**
+     * Marker "schon komprimiert" in den Metadaten ignorieren.
+     *
+     * Aus: eine Datei, die schon durch einen Lauf ging, wird
+     * uebersprungen. An: sie wird trotzdem komprimiert - fuer den Fall,
+     * dass der erste Lauf zu schwach eingestellt war. Der Marker wird
+     * dabei nicht geloescht, sondern mitgezaehlt (`runs`).
+     */
+    val ignoreCompressionTag: Boolean = false
 ) {
     fun save(prefs: android.content.SharedPreferences) {
         prefs.edit()
@@ -78,6 +97,7 @@ data class CompressSettings(
             .putBoolean("keep_timestamps", keepTimestamps)
             .putBoolean("keep_exif", keepExif)
             .putBoolean("click_sounds", clickSounds)
+            .putBoolean("ignore_compression_tag", ignoreCompressionTag)
             .apply()
     }
 
@@ -99,7 +119,8 @@ data class CompressSettings(
                 outputMode = enum(prefs.getString("output_mode", null), OutputMode.entries.toTypedArray(), d.outputMode),
                 keepTimestamps = prefs.getBoolean("keep_timestamps", d.keepTimestamps),
                 keepExif = prefs.getBoolean("keep_exif", d.keepExif),
-                clickSounds = prefs.getBoolean("click_sounds", d.clickSounds)
+                clickSounds = prefs.getBoolean("click_sounds", d.clickSounds),
+                ignoreCompressionTag = prefs.getBoolean("ignore_compression_tag", d.ignoreCompressionTag)
             )
         }
     }

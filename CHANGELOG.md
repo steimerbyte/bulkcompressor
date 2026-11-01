@@ -4,6 +4,25 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.9.5] – 2026-11-01
+
+### Geändert
+
+- **Der Statistik-Einstieg sitzt jetzt unter der Stand-Tafel**, als
+  beschrifteter Knopf über die volle Breite: gleiche Bauform wie „Zugriff
+  erteilen", Mono-Schrift, 48 dp. Vorher war er eine 44-dp-Ikone oben
+  rechts neben dem Kopfpunkt — ohne Beschriftung, mit negativen Rändern an
+  den Rand geschoben, und ihr Ziel erfuhr man erst nach dem Tippen.
+  - Der Ort ist der Inhalt: die Tafel darüber zeigt den letzten Lauf
+    (APP-HEAP, freigegeben), die Seite dahinter die Summe über alle Läufe.
+    Zwei Ansichten derselben Frage gehören nebeneinander, nicht in den Kopf
+    über einen Ordnerauswähler.
+  - Die Ikone `ic_stats` entfällt — nach dem Verschieben hatte sie keinen
+    Aufrufer mehr.
+  - `MainActivitySmokeTest` prüft jetzt beides: der Knopf steht im selben
+    Elternknoten **nach** `stats_board`, und ein Klick startet
+    `StatsActivity`.
+
 ## [1.9.4] – 2026-11-01
 
 ### Hinzugefügt

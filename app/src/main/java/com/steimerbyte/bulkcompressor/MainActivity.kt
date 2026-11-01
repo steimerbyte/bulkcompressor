@@ -120,7 +120,7 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
     private lateinit var textCurrent: TextView
     private lateinit var textTotals: TextView
     private lateinit var textTotalSaved: TextView
-    private lateinit var buttonStats: android.widget.ImageButton
+    private lateinit var buttonStats: android.widget.Button
     private lateinit var textActiveConfig: TextView
     private lateinit var statusVideo: TextView
     private lateinit var statusImages: TextView

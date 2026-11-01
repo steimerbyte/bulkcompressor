@@ -44,37 +44,14 @@
                  App tut; sobald ein Ordner geladen ist, kostet er nur
                  Platz, der der Dateiliste fehlt. -->
 
-            <LinearLayout
-                android:layout_width="match_parent"
+            <TextView
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:fontFamily="monospace"
-                    android:letterSpacing="0.4"
-                    android:text="●"
-                    android:textColor="@color/nothing_dim"
-                    android:textSize="12sp" />
-
-                <!-- Einstieg in die Statistik: eigene Seite, deshalb hier
-                     oben rechts und nicht als Abschnitt im Ablauf unten. -->
-                <ImageButton
-                    android:id="@+id/button_stats"
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
-                    android:layout_marginTop="-10dp"
-                    android:layout_marginEnd="-12dp"
-                    android:layout_marginBottom="-10dp"
-                    android:background="?android:attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="@string/button_stats"
-                    android:padding="10dp"
-                    android:src="@drawable/ic_stats"
-                    android:tint="@color/nothing_grey" />
-            </LinearLayout>
+                android:fontFamily="monospace"
+                android:letterSpacing="0.4"
+                android:text="●"
+                android:textColor="@color/nothing_dim"
+                android:textSize="12sp" />
 
             <TextView
                 android:layout_width="match_parent"
@@ -911,6 +888,27 @@
                     android:textSize="10sp"
                     android:visibility="gone" />
             </LinearLayout>
+
+            <!--
+                Einstieg in die Statistik: eigene Seite mit allen Laeufen.
+                Sie steht unter der Stand-Tafel, weil die Tafel die Zahlen
+                des letzten Laufs zeigt und diese Seite die Summe ueber
+                alle - zwei Ansichten derselben Frage gehoeren nebeneinander.
+                Vorher war es eine nackte Ikone oben rechts: 44 dp ohne
+                Beschriftung, deren Ziel man erst nach dem Tippen kannte.
+            -->
+            <Button
+                android:id="@+id/button_stats"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/button_background_outline"
+                android:fontFamily="monospace"
+                android:letterSpacing="0.06"
+                android:text="@string/button_stats"
+                android:textAllCaps="false"
+                android:textColor="@color/nothing_white"
+                android:textSize="13sp" />
 
             <!-- ====================== 7. ZUSAMMENFASSUNG ====================== -->
 

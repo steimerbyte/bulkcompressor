@@ -417,6 +417,37 @@ class MainActivitySmokeTest {
     }
 
     @Test
+    fun `Statistik steht unter der Stand-Tafel und oeffnet die Seite`() {
+        val activity = activity()
+        val button = activity.findViewById<android.widget.Button>(R.id.button_stats)
+
+        // Die Tafel zeigt die Zahlen des letzten Laufs, diese Seite die
+        // Summe ueber alle: der Einstieg gehoert direkt darunter. Oben im
+        // Kopf sass er als nackte Ikone ohne Beschriftung.
+        assertEquals("Statistik", button.text.toString())
+        val board = activity.findViewById<View>(R.id.stats_board)
+        assertTrue(
+            "Der Knopf muss nach der Stand-Tafel stehen",
+            isAfter(button, board)
+        )
+
+        button.performClick()
+        shadowOf(Looper.getMainLooper()).idle()
+        val started = shadowOf(activity).nextStartedActivity
+        assertEquals(
+            com.steimerbyte.bulkcompressor.stats.StatsActivity::class.java.name,
+            started?.component?.className
+        )
+    }
+
+    /** Steht [later] im selben Elternknoten hinter [earlier]? */
+    private fun isAfter(later: View, earlier: View): Boolean {
+        val parent = later.parent as? android.view.ViewGroup ?: return false
+        if (parent !== earlier.parent) return false
+        return parent.indexOfChild(later) > parent.indexOfChild(earlier)
+    }
+
+    @Test
     fun `Schalter fuer erneutes Bearbeiten kippt die Einstellung und bleibt gespeichert`() {
         val activity = activity()
         val prefs = activity.getSharedPreferences(CompressSettings.PREFS, Context.MODE_PRIVATE)

@@ -47,6 +47,15 @@ data class ScanResult(
      * Dateien fehlen - der Nutzer muss das erfahren, nicht nur das Log.
      */
     val unreadableFolders: Int = 0,
+    /**
+     * Dateien, deren Marker **nicht lesbar** war. Sie stehen auf der Liste,
+     * weil "unbekannt" nicht "komprimiert" ist - ein Lauf wuerde sie nur
+     * ueberspringen, wenn der Marker lesbar waere. Gezaehlt wird trotzdem:
+     * eine Zahl ueber null bedeutet, dass der Filter fuer diesen Anbieter
+     * nicht greift, und das muss sichtbar sein statt wie "alles neu"
+     * auszusehen.
+     */
+    val markersUnreadable: Int = 0,
     /** Einmal gezaehlt beim Scan - nicht bei jeder Anzeige neu gefiltert. */
     val videoCount: Int = items.count { it.kind == MediaKind.VIDEO },
     val imageCount: Int = items.size - videoCount

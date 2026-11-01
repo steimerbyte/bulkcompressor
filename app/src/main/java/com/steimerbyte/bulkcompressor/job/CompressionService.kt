@@ -197,9 +197,15 @@ class CompressionService : Service(), JobBus.Listener {
                 // Zeitstempel und Ordnerzuordnung auch dann, wenn
                 // zwischendurch etwas geaendert wurde.
                 val scanStartedAt = System.currentTimeMillis()
-                // Der Scan liest nur den Kind-Cursor; Marker prueft der
-                // Lauf unmittelbar vor jeder Datei.
-                val scan = SafScanner(contentResolver).scan(treeUri)
+                // respectTag = false, weil hier nur Groesse, Zeitstempel und
+                // Ordnerzuordnung aufgefrischt werden. Die Einordnung
+                // "schon komprimiert" trifft der Job unmittelbar vor jeder
+                // Datei - mit demselben Leser, aber mit dem Grund fuer den
+                // Nutzer. Wuerde der Scan schon filtern, verschwaende die
+                // Datei aus der Auswahl, und der Job koennte nicht mehr
+                // sagen, warum. Ein Marker-Leser hier waere ausserdem eine
+                // Abfrage je Datei ohne Erkenntnis.
+                val scan = SafScanner(contentResolver).scan(treeUri, respectTag = false)
                 val wanted = docIds.toHashSet()
                 val items = scan.items.filter { it.docId in wanted }
                 Log.i(
@@ -214,6 +220,24 @@ class CompressionService : Service(), JobBus.Listener {
                         "Service",
                         "Nur ${items.size} von ${docIds.size} gewaehlten Dateien wiedergefunden"
                     )
+                }
+                // Keine einzige Datei wiedergefunden: das ist kein fertiger
+                // Lauf, sondern ein Befund. Frueher lief der Job mit einer
+                // leeren Liste und meldete "nichts zu tun" - der Nutzer
+                // sah einen erledigten Auftrag, in dem nichts passiert war.
+                if (items.isEmpty()) {
+                    val text = "Keine der ${docIds.size} gewaehlten Dateien im Ordner gefunden" +
+                        " - moeglicherweise wurde der Ordner verschoben oder der Zugriff entzogen"
+                    Log.e(
+                        "Service",
+                        "$text · Scan fand ${scan.items.size} Dateien in ${scan.folderCount} Ordnern" +
+                            " · ${scan.unreadableFolders} Ordner nicht lesbar"
+                    )
+                    JobBus.appendLog("NICHT FERTIG: $text")
+                    JobBus.publish(
+                        JobBus.state.copy(running = false, finished = true, total = 0, done = 0)
+                    )
+                    return@Thread
                 }
                 val settings = CompressSettings.load(
                     getSharedPreferences(CompressSettings.PREFS, MODE_PRIVATE)
@@ -330,6 +354,7 @@ class CompressionService : Service(), JobBus.Listener {
                 " · Abbruch ${if (cancelledNow) "ja" else "nein"} · $abortDetail" +
                 " · ${state.done}/${state.total} Dateien" +
                 " · ${state.skipped} uebersprungen · ${state.failed} fehlgeschlagen" +
+                (if (state.unreadable > 0) " · ${state.unreadable} Marker nicht lesbar" else "") +
                 " · ${CompressionJob.formatSize(state.beforeBytes)} -> " +
                 "${CompressionJob.formatSize(state.afterBytes)}" +
                 " · ${notificationUpdates} Benachrichtigungs-Updates" +
@@ -456,28 +481,65 @@ class CompressionService : Service(), JobBus.Listener {
     private fun recordRun(tree: Uri) {
         runCatching {
             val state = JobBus.state
+            // Unlesbare Marker zaehlen in der Statistik als nicht
+            // bearbeitet, nicht als Erfolg: `runRecord` rechnet
+            // `done - skipped - failed`, und ein Lauf aus lauter
+            // unbekannten Zustaenden haette sonst Erfolge, die es nicht
+            // gab. Die Signatur von [runRecord] bleibt unveraendert -
+            // sie gehoert nicht zu diesem Umbau.
             val entry = runRecord(
                 id = runStartedAt,
                 folder = FolderPath.display(tree),
                 total = state.total,
                 done = state.done,
                 skipped = state.skipped,
-                failed = state.failed,
+                failed = state.failed + state.unreadable,
                 savedBytes = state.savedBytes
             ) ?: return
             RunHistory.of(applicationContext).record(entry)
         }.onFailure { Log.w("Service", "Lauf nicht in die Statistik geschrieben", it) }
     }
 
+    /**
+     * Abschlussmeldung.
+     *
+     * Sie ist der einzige Text, den man nach dem Lauf ohne die App sieht.
+     * Deshalb steht hier "nichts bearbeitet" samt Grund, wenn der Lauf an
+     * unlesbaren Markern gescheitert ist: "Fertig: 0 Dateien" sieht wie
+     * ein erledigter Auftrag aus, und genau diese Verwechslung war der
+     * Fehlerbericht.
+     */
     private fun finishForeground(stopService: Boolean = true) {
         JobBus.publish(JobBus.state.copy(running = false))
         val state = JobBus.state
         val summary = buildString {
-            if (state.cancelled) append("Abgebrochen") else append("Fertig")
+            if (state.cancelled) {
+                append("Abgebrochen")
+            } else if (nothingDone(state)) {
+                append("Nichts bearbeitet")
+            } else {
+                append("Fertig")
+            }
             append(": ${state.done} Dateien")
+            if (state.unreadable > 0) {
+                append(" · ${state.unreadable} Marker nicht lesbar")
+            }
             if (state.beforeBytes > 0) {
                 append(" · ${CompressionJob.formatSize(state.savedBytes)} gespart")
             }
+        }
+        if (nothingDone(state)) {
+            JobBus.appendLog(
+                "NICHT FERTIG: ${
+                    state.unreadable.coerceAtLeast(0)
+                } Dateien nicht bearbeitet, weil der Marker nicht lesbar war" +
+                    " - sie sind unangetastet, ihr Zustand ist unbekannt"
+            )
+            Log.w(
+                "Service",
+                "Lauf ohne Ergebnis: ${state.unreadable} unlesbare Marker," +
+                    " ${state.failed} Fehler · Abschlussmeldung \"$summary\""
+            )
         }
         val notification = buildNotification(summary, null, 0, false)
         val manager = getSystemService(NotificationManager::class.java)
@@ -490,6 +552,17 @@ class CompressionService : Service(), JobBus.Listener {
                 " · Dienst stoppt sich selbst (stopSelf)"
         )
         stopSelf()
+    }
+
+    /**
+     * Hat der Lauf keine einzige Datei geschafft? Ein Abbruch ist etwas
+     * anderes - da hat der Nutzer selbst gestoppt, und "nichts
+     * bearbeitet" waere eine Schuldzuweisung.
+     */
+    private fun nothingDone(state: JobBus.State): Boolean {
+        if (state.cancelled || state.total <= 0 || state.done <= 0) return false
+        val succeeded = (state.done - state.skipped - state.unreadable - state.failed)
+        return succeeded <= 0 && state.unreadable > 0
     }
 
     /**

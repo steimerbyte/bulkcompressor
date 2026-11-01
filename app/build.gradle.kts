@@ -23,8 +23,8 @@ android {
         // braucht nicht mehr als MediaCodec + MediaMuxer (API 18+).
         minSdk = 24
         targetSdk = 35
-        versionCode = 21
-        versionName = "1.9.1"
+        versionCode = 22
+        versionName = "1.9.2"
     }
 
     signingConfigs {
@@ -83,4 +83,17 @@ dependencies {
     // Oberflaeche im JVM-Test: prueft Layout-Inflation, Verkabelung und
     // die Logdatei, ohne Geraet oder Emulator.
     testImplementation("org.robolectric:robolectric:4.14.1")
+}
+
+// ---------------------------------------------------------------------------
+// Release-Sperre
+// ---------------------------------------------------------------------------
+// Ein Release-APK entsteht nur nach gruener Testsuite. Der Haken haengt an
+// `assembleRelease`, nicht an einem Skript: damit kann auch ein von Hand
+// getippter Aufruf den Schritt nicht vergessen. `tools/release.sh` prueft
+// zusaetzlich, dass die Suite wirklich gelaufen ist (Testergebnisse werden
+// vorher geloescht und danach ausgezaehlt) - dieser Haken allein wuerde ein
+// zwischengespeichertes Ergebnis aus `build/` als gruen durchwinken.
+tasks.matching { it.name == "assembleRelease" }.configureEach {
+    dependsOn("testDebugUnitTest")
 }

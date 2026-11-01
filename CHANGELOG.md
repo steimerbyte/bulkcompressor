@@ -4,6 +4,66 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.9.2] – 2026-11-01
+
+### Behoben
+
+- **Ein Lauf, der etwas getan hatte, meldete beim nächsten Scan „nichts
+  komprimiert".** Der Marker stand in den Dateien; der *Leser* scheiterte.
+  Er sprang über den Dateideskriptor (`Os.pread`) ans Dateiende, und
+  Anbieter, die keine seekbare Datei liefern (Cloud, Downloads, manche
+  Geräteanbieter), geben dafür eine Pipe. Aus dem Fehlschlag wurde still
+  `null` — und `null` hieß für den Filter „nicht komprimiert".
+  - Der Lesestrom (`openInputStream`) ist jetzt der Weg, der entscheidet;
+    der Deskriptor bleibt Abkürzung für echte Dateien.
+  - Jeder Fehlschlag ist **`UNREADABLE` mit Grund**, nicht `null`. Die
+    Datei bleibt auf der Liste (sie wird nicht stillschweigend ein
+    zweites Mal verkleinert) und die Zusammenfassung nennt sie:
+    „· 4 Marker nicht lesbar". Der Grund steht einzeilig im Protokoll.
+  - Neun neue Tests, darunter der eigentliche Fehler: ein Anbieter, der
+    **ausschließlich** Pipes liefert, muss den Marker trotzdem finden —
+    MP4 über das Dateiende und JPEG über EXIF.
+
+### Neu
+
+- **Chronologie für Videos.** Der MP4-Kopf (`mvhd`, `tkhd`, `mdhd`) trägt
+  `creation_time`, und `MediaMuxer` schreibt dort die Zeit des Laufs —
+  die Galerie sortiert das Video damit ans Ende. Die App berichtigt die
+  Felder nach dem Schließen des Muxers (32- und 64-Bit-Kopf, vorzeichenlos,
+  1904-Ära) auf den ermittelten Zeitpunkt.
+- **Zeitpunkt mit Rückfallebene.** Ist die Änderungszeit der Quelle
+  unbrauchbar (0 oder Zukunft), wird das Datum aus dem Dateinamen
+  gelesen (`IMG_20250815_142530`, `Screenshot 2025-08-15`,
+  `20250815-142530`, `IMG_20250315` am Namensende). Ist auch das nicht
+  möglich, wird **kein** Wert gesetzt — ein 0-Wert würde in der Galerie
+  auf 1970 landen. Der Zeitpunkt wird einmal je Datei entschieden und
+  landet an beiden Stellen (Dateizeit, Container-Kopf), damit Sortierung
+  und Anzeige nicht auseinanderlaufen.
+- Der Hinweis „Zeitstempel ließ sich nicht zurücksetzen" erscheint nur
+  noch, wenn ein Setzen tatsächlich scheiterte — nicht, wenn es schlicht
+  kein Datum gab.
+
+### Werkzeug
+
+- **Release-Sperre.** `tools/release.sh` veröffentlicht nur nach voller
+  grüner Testsuite: sauberer Arbeitsbaum, erhöhter `versionCode` gegen die
+  letzte Marke, Testergebnisse vorher gelöscht und danach ausgezählt
+  (`tests > 0`, `failures == 0`), Artefaktprüfung mit `aapt2` und
+  `apksigner`, und die veröffentlichte Datei wird zurückgelesen.
+  Zusätzlich hängt `assembleRelease` in `app/build.gradle.kts` an
+  `testDebugUnitTest`, damit auch ein manueller Bau den Schritt nicht
+  überspringen kann.
+
+### Geprüft
+
+- 287 Unit-Tests grün, davon 34 neue (Marker-Leser über nicht-seekbare
+  Anbieter, MP4-Kopf-Zeit, Dateinamen-Muster, Prioritätskette,
+  Einstellungs-Persistenz, Scan-Zähler in der Zusammenfassung).
+- **Nicht** geprüft: das Setzen der Dateizeit und das Lesen über einen
+  Anbieter auf einem echten Gerät — hier fehlen Emulator und Gerät. Die
+  Container-Berichtigung ist gegen echte MP4-Dateien getestet, nicht gegen
+  eine Aufnahme eines Geräte-Codecs.
+
 ## [1.9.1] – 2026-11-01
 
 ### Geändert

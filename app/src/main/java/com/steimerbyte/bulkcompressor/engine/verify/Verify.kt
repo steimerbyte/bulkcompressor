@@ -9,6 +9,8 @@ import android.provider.DocumentsContract
 import com.steimerbyte.bulkcompressor.engine.DescriptorIo
 import com.steimerbyte.bulkcompressor.engine.readAtMost
 import com.steimerbyte.bulkcompressor.engine.tag.CompressionTag
+import com.steimerbyte.bulkcompressor.engine.tag.MarkerReading
+import com.steimerbyte.bulkcompressor.engine.tag.MarkerState
 import com.steimerbyte.bulkcompressor.engine.tag.Mp4Tag
 import com.steimerbyte.bulkcompressor.engine.tag.TagFile
 import com.steimerbyte.bulkcompressor.engine.tag.TagStore
@@ -129,6 +131,19 @@ object Verifier {
      * @param probeTracks liefert `null`, wenn die Spur in Ordnung ist,
      *                    sonst den Grund. Im Test steht hier `{ null }`,
      *                    nie der echte Extraktor.
+     * @param probe       derselbe Marker-Leser, den Job und Scan benutzen.
+     *
+     * Der Marker wird **nicht** mit einem eigenen Leser geprueft. Zwei
+     * Leser heisst zwei Wahrheiten: der Job schriebe "geprueft, Marker
+     * vorhanden", waehrend der naechste Scan dieselbe Datei als
+     * "nicht komprimiert" sieht - oder umgekehrt - und niemand koennte
+     * sagen, welcher der beiden recht hat. Deshalb kommt der Befund von
+     * aussen; `null` heisst "niemand hat einen mitgegeben", dann liest
+     * [TagStore] als Vorgabe.
+     *
+     * Ein `UNREADABLE` ist ein Fehlbefund mit Grund, kein "Marker fehlt":
+     * "nicht lesbar" und "nicht da" sind verschiedene Aussagen, und nur
+     * die zweite ist hier eine Aussage ueber die Datei.
      */
     fun verifyDocument(
         resolver: ContentResolver,
@@ -136,7 +151,8 @@ object Verifier {
         expectMime: String,
         expectedBytes: Long,
         expectTag: Boolean,
-        probeTracks: (Uri) -> String?
+        probeTracks: (Uri) -> String?,
+        probe: ((Uri) -> MarkerReading)? = null
     ): VerifyReport {
         val checks = ArrayList<Check>(4)
         val family = expectedFamily(expectMime)
@@ -181,7 +197,20 @@ object Verifier {
             Family.UNKNOWN -> Unit
         }
 
-        checks += markerCheck(expectTag, TagStore(resolver).read(uri))
+        val reading = if (probe != null) {
+            runCatching { probe(uri) }.getOrElse { thrown ->
+                // Der Leser hat geworfen, statt einen Zustand zu liefern.
+                // Das ist genau der Fall, den der Filter still verschluckt
+                // hat - hier wird daraus ein Befund mit Grund.
+                MarkerReading(
+                    MarkerState.UNREADABLE,
+                    reason = "Marker-Leser warf ${thrown.message ?: thrown.javaClass.simpleName}"
+                )
+            }
+        } else {
+            TagStore(resolver).probe(uri)
+        }
+        checks += markerCheck(expectTag, reading)
         return VerifyReport(checks)
     }
 
@@ -270,6 +299,27 @@ object Verifier {
         !expectTag -> Check("Marker", Check.State.SKIPPED, "nicht angefordert")
         tag == null -> Check("Marker", Check.State.FAILED, "fehlt nach dem Schreiben")
         else -> Check("Marker", Check.State.OK, tag.describe())
+    }
+
+    /**
+     * Der Marker-Befund fuer ein abgelegtes Dokument.
+     *
+     * `UNREADABLE` wird als eigener Grund gemeldet und nicht als
+     * "fehlt": ob ein Marker da ist, weiss in diesem Fall niemand, und
+     * ein Fehlbefund "fehlt" waere eine Behauptung ueber die Datei, die
+     * niemand geprueft hat. Fuer den Aufrufer ist beides ein
+     * Fehlschlag - der Unterschied steht im Text und damit im Log.
+     */
+    private fun markerCheck(expectTag: Boolean, reading: MarkerReading): Check = when {
+        !expectTag -> Check("Marker", Check.State.SKIPPED, "nicht angefordert")
+        reading.state == MarkerState.UNREADABLE -> Check(
+            "Marker",
+            Check.State.FAILED,
+            "nicht lesbar: " + reading.reason.ifBlank { "ohne Angabe" }
+        )
+        reading.state == MarkerState.CLEAR -> Check("Marker", Check.State.FAILED, "fehlt nach dem Schreiben")
+        reading.tag == null -> Check("Marker", Check.State.OK, "vorhanden")
+        else -> Check("Marker", Check.State.OK, reading.tag.describe())
     }
 
     /**

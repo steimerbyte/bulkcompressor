@@ -883,12 +883,21 @@ class MainActivity : AppCompatActivity(), JobBus.Listener {
             } else {
                 ""
             }
+            // Marker, deren Zustand sich nicht lesen liess, stehen auf der
+            // Liste - sie ein zweites Mal zu komprimieren kostet Qualitaet.
+            // Ohne diese Zahl saehe die Liste vollstaendig aus, waehrend der
+            // Filter fuer diesen Anbieter gar nicht greift.
+            val markerNote = if (result.markersUnreadable > 0) {
+                getString(R.string.scan_markers_unreadable, result.markersUnreadable)
+            } else {
+                ""
+            }
             textSummary.text = getString(
                 R.string.scan_summary,
                 result.videoCount,
                 result.imageCount,
                 CompressionJob.formatSize(result.totalBytes)
-            ) + truncatedNote + partialNote + taggedNote
+            ) + truncatedNote + partialNote + taggedNote + markerNote
             listMedia.visibility = View.VISIBLE
         }
         adapter.submit(result.items, selectedIds)

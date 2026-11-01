@@ -9,18 +9,15 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Rule
-import org.junit.rules.TemporaryFolder
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import com.steimerbyte.bulkcompressor.engine.tag.CompressionTag
-import com.steimerbyte.bulkcompressor.engine.tag.TagFile
-import java.io.File
+import com.steimerbyte.bulkcompressor.engine.tag.MarkerProbe
+import com.steimerbyte.bulkcompressor.engine.tag.MarkerReading
+import com.steimerbyte.bulkcompressor.engine.tag.MarkerState
 import java.io.FileNotFoundException
 
 /**
@@ -33,9 +30,6 @@ import java.io.FileNotFoundException
  */
 @RunWith(RobolectricTestRunner::class)
 class SafScannerTest {
-
-    @get:Rule
-    val temp = TemporaryFolder()
 
     data class Row(
         val id: String,
@@ -105,16 +99,12 @@ class SafScannerTest {
         ) = 0
 
         /**
-         * Inhalt je Dokument-ID. Der Kind-Cursor allein reicht fuer den
-         * Scanner; der Marker ("schon komprimiert") steht aber **in der
-         * Datei**, also muss der Test sie auch ausliefern koennen.
+         * Kein Dateiinhalt: der Scanner liest selbst nie eine Datei, er
+         * fragt [MarkerProbe]. Wer hier einen Deskriptor oeffnet, hat den
+         * Vertrag verletzt - deshalb wirft der Aufruf sichtbar.
          */
         override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
-            val segments = uri.pathSegments
-            val index = segments.indexOf("document")
-            val documentId = if (index >= 0 && index + 1 < segments.size) segments[index + 1] else ""
-            val file = files?.get(documentId) ?: throw FileNotFoundException("kein Inhalt fuer $documentId")
-            return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            throw FileNotFoundException("Scanner darf keine Datei oeffnen: $uri")
         }
 
         companion object {
@@ -123,15 +113,8 @@ class SafScannerTest {
             /** Der aktuell bediente Baum; je Test neu gesetzt. */
             internal var tree: Tree? = null
 
-            /** Dateiinhalt je Dokument-ID; ohne Eintrag ist das Dokument leer. */
-            internal var files: Map<String, File>? = null
-
-            internal fun install(
-                children: Map<String, List<Row>>,
-                contents: Map<String, File> = emptyMap()
-            ): ContentResolver {
+            internal fun install(children: Map<String, List<Row>>): ContentResolver {
                 tree = Tree(children)
-                files = contents
                 Robolectric.setupContentProvider(TreeProvider::class.java, AUTHORITY)
                 return RuntimeEnvironment.getApplication().contentResolver
             }
@@ -141,26 +124,30 @@ class SafScannerTest {
     private fun treeUri(root: String = "primary:DCIM") =
         Uri.parse("content://com.android.externalstorage.documents/tree/" + Uri.encode(root))
 
-    /** Ein Video mit und ohne Marker - der Container ist hier egal. */
-    private fun mp4File(name: String, tagged: Boolean): File {
-        val ftyp = byteArrayOf(0, 0, 0, 0x1C) + "ftypisom".toByteArray(Charsets.US_ASCII) +
-            byteArrayOf(0, 0, 2, 0) + "isomiso2mp41".toByteArray(Charsets.US_ASCII)
-        val mdat = byteArrayOf(0, 0, 0, 0x10) + "mdat".toByteArray(Charsets.US_ASCII) + ByteArray(8)
-        val file = temp.newFile(name)
-        file.writeBytes(ftyp + mdat)
-        if (tagged) {
-            val error = TagFile.write(
-                file,
-                CompressionTag(runs = 1, sourceBytes = 4_000_000, resultBytes = 1_000_000, atMillis = 1_762_000_000_000)
-            )
-            assertNull("Marker muss sich schreiben lassen", error)
-        }
-        return file
-    }
-
     private fun dir(id: String, name: String) = Row(id, name)
     private fun file(id: String, name: String, size: Long = 1024) =
         Row(id, name, "application/octet-stream", size)
+
+    /**
+     * Der Marker wird hier injiziert, nicht aus der Datei gelesen.
+     *
+     * Robolectric kann ihn ueber einen Provider mit `openFile` nicht
+     * liefern - `Os.pread` gibt dort <= 0 und `ExifInterface` auf dem
+     * Deskriptor wirft (siehe Brief). Der Test prueft die Reaktion des
+     * Scanners, nicht den Leser; der gehoert zu A1.
+     */
+    private class StubProbe(private val marked: Set<String> = emptySet()) : MarkerProbe {
+        override fun probe(uri: Uri): MarkerReading {
+            val segments = uri.pathSegments
+            val index = segments.indexOf("document")
+            val docId = if (index >= 0 && index + 1 < segments.size) segments[index + 1] else ""
+            return if (docId in marked) {
+                MarkerReading(MarkerState.MARKED)
+            } else {
+                MarkerReading(MarkerState.CLEAR)
+            }
+        }
+    }
 
     @Test
     fun `liest Dateien aus allen Unterordnern`() {
@@ -184,7 +171,7 @@ class SafScannerTest {
             )
         )
 
-        val result = SafScanner(resolver).scan(treeUri())
+        val result = SafScanner(resolver, StubProbe()).scan(treeUri())
 
         assertEquals(
             listOf("a.mp4", "b.jpg", "oben.jpg", "s.png"),
@@ -207,7 +194,7 @@ class SafScannerTest {
             )
         )
 
-        val result = SafScanner(resolver).scan(treeUri("primary:X"))
+        val result = SafScanner(resolver, StubProbe()).scan(treeUri("primary:X"))
 
         assertEquals(listOf("v.mp4"), result.items.map { it.displayName })
         assertEquals(2, result.folderCount)
@@ -238,7 +225,7 @@ class SafScannerTest {
                 )
             )
 
-            val result = SafScanner(resolver).scan(treeUri())
+            val result = SafScanner(resolver, StubProbe()).scan(treeUri())
 
             assertEquals(
                 "Verzeichnis-MIME $mime",
@@ -264,7 +251,7 @@ class SafScannerTest {
             )
         )
 
-        val result = SafScanner(resolver).scan(treeUri())
+        val result = SafScanner(resolver, StubProbe()).scan(treeUri())
 
         assertEquals(
             listOf("a.mp4", "oben.jpg"),
@@ -285,7 +272,7 @@ class SafScannerTest {
             )
         )
 
-        val result = SafScanner(resolver).scan(treeUri())
+        val result = SafScanner(resolver, StubProbe()).scan(treeUri())
 
         assertEquals(listOf("ok.jpg"), result.items.map { it.displayName })
         assertEquals(1, result.unreadableFolders)
@@ -307,16 +294,11 @@ class SafScannerTest {
                     file("primary:DCIM/alt.mp4", "alt.mp4"),
                     file("primary:DCIM/neu.mp4", "neu.mp4")
                 )
-            ),
-            contents = mapOf(
-                "primary:DCIM/alt.mp4" to mp4File("alt.mp4", tagged = true),
-                "primary:DCIM/neu.mp4" to mp4File("neu.mp4", tagged = false)
             )
         )
 
-        val marked = setOf("primary:DCIM/alt.mp4")
-        val result = SafScanner(resolver, isMarked = { uri -> marked.any { uri.toString().endsWith(Uri.encode(it)) } })
-            .scan(treeUri())
+        val probe = StubProbe(setOf("primary:DCIM/alt.mp4"))
+        val result = SafScanner(resolver, probe).scan(treeUri())
 
         assertEquals(
             "Nur die unkomprimierte Datei darf auf der Liste stehen",
@@ -335,18 +317,11 @@ class SafScannerTest {
                     file("primary:DCIM/alt.mp4", "alt.mp4"),
                     file("primary:DCIM/neu.mp4", "neu.mp4")
                 )
-            ),
-            contents = mapOf(
-                "primary:DCIM/alt.mp4" to mp4File("alt.mp4", tagged = true),
-                "primary:DCIM/neu.mp4" to mp4File("neu.mp4", tagged = false)
             )
         )
 
-        val marked = setOf("primary:DCIM/alt.mp4")
-        val result = SafScanner(
-            resolver,
-            isMarked = { uri -> marked.any { uri.toString().endsWith(Uri.encode(it)) } }
-        ).scan(treeUri(), respectTag = false)
+        val probe = StubProbe(setOf("primary:DCIM/alt.mp4"))
+        val result = SafScanner(resolver, probe).scan(treeUri(), respectTag = false)
 
         assertEquals(
             listOf("alt.mp4", "neu.mp4"),

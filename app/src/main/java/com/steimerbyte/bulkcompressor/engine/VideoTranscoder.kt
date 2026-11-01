@@ -155,6 +155,10 @@ class VideoTranscoder(private val context: Context) {
 
     /**
      * Schreibt die komprimierte Fassung nach [target].
+     *
+     * @param creationTimeMillis Aufnahmezeit, die im MP4-Kopf stehen soll.
+     *        `MediaMuxer` schreibt dort sonst die Zeit des Laufs, und die
+     *        Galerie sortiert das Video nach oben. 0 = nicht anfassen.
      * @return der tatsaechlich verwendete Plan (Groesse und Bitrate
      *         koennen durch die Encoder-Faehigkeiten kleiner ausfallen)
      */
@@ -166,7 +170,8 @@ class VideoTranscoder(private val context: Context) {
         orientationHint: Int,
         onProgress: (Float) -> Unit,
         isCancelled: () -> Boolean,
-        throttle: () -> Unit = {}
+        throttle: () -> Unit = {},
+        creationTimeMillis: Long = 0L
     ): VideoPlan {
         val abort = AtomicBoolean(false)
         val extractor = MediaExtractor()
@@ -257,7 +262,8 @@ class VideoTranscoder(private val context: Context) {
             val session = MuxerSession(
                 target.absolutePath,
                 rotation,
-                if (audioTrackIndex >= 0) 2 else 1
+                if (audioTrackIndex >= 0) 2 else 1,
+                creationTimeMillis
             )
             Log.d(
                 "Video",
@@ -1051,7 +1057,13 @@ class VideoTranscoder(private val context: Context) {
      * laufen in getrennten Threads, damit die Samples zeitlich sortiert
      * ankommen - der MP4-Writer verlangt das.
      */
-    private class MuxerSession(path: String, orientation: Int, expectedTracks: Int) {
+    private class MuxerSession(
+        private val path: String,
+        orientation: Int,
+        expectedTracks: Int,
+        /** Aufnahmezeit fuer den MP4-Kopf; 0 = die Zeit des Laufs stehen lassen. */
+        private val creationTimeMillis: Long = 0L
+    ) {
         private val muxer = MediaMuxer(path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         private val lock = ReentrantLock()
         private val ready = lock.newCondition()
@@ -1188,6 +1200,17 @@ class VideoTranscoder(private val context: Context) {
                     muxer.release()
                 } catch (t: Throwable) {
                     Log.w("Video", "Muxer.release fehlgeschlagen", t)
+                }
+                // Erst nach dem Schliessen ist die Datei vollstaendig: der
+                // Muxer schreibt die mvhd beim Stop, danach wird der Kopf
+                // berichtigt. Ohne das steht im Video die Zeit des Laufs.
+                if (creationTimeMillis > 0L) {
+                    val patch = Mp4Dates.setCreationTime(File(path), creationTimeMillis)
+                    Log.d(
+                        "Video",
+                        "Aufnahmezeit im MP4-Kopf: ${patch.written}/${patch.boxes} Boxen" +
+                            (patch.skipped?.let { " · $it" } ?: "")
+                    )
                 }
             }
         }

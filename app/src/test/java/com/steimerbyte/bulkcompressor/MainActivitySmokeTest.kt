@@ -226,6 +226,64 @@ class MainActivitySmokeTest {
         assertNotNull("Schalter fuer Klickgeraeusche fehlt im Layout", markSound)
     }
 
+    /**
+     * Ein Marker, dessen Zustand niemand lesen konnte, steht auf der
+     * Liste. Wird das verschwiegen, sieht eine unvollstaendige Liste aus
+     * wie eine fertige - und die Dateien werden ein zweites Mal
+     * verlustbehaftet komprimiert.
+     */
+    @Test
+    fun `unlesbare marker erscheinen in der zusammenfassung`() {
+        val activity = activity()
+        val items = listOf(
+            MediaItem(
+                uri = android.net.Uri.parse("content://test/document/VID_1.mp4"),
+                docId = "v1",
+                parentId = "p",
+                displayName = "VID_1.mp4",
+                mime = "video/mp4",
+                sizeBytes = 10_000_000L,
+                lastModified = 1L,
+                kind = MediaKind.VIDEO
+            )
+        )
+
+        activity.applyScanForTest(
+            android.net.Uri.parse("content://test/tree/p"),
+            ScanResult(items = items, folderCount = 0, truncated = false, markersUnreadable = 1)
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val text = activity.findViewById<TextView>(R.id.text_summary).text.toString()
+        assertTrue("Zaehler fehlt in der Zusammenfassung:\n$text", text.contains("Marker nicht lesbar"))
+    }
+
+    @Test
+    fun `ohne unlesbare marker bleibt die zusammenfassung knapp`() {
+        val activity = activity()
+        val items = listOf(
+            MediaItem(
+                uri = android.net.Uri.parse("content://test/document/IMG_1.jpg"),
+                docId = "i1",
+                parentId = "p",
+                displayName = "IMG_1.jpg",
+                mime = "image/jpeg",
+                sizeBytes = 2_000_000L,
+                lastModified = 1L,
+                kind = MediaKind.IMAGE
+            )
+        )
+
+        activity.applyScanForTest(
+            android.net.Uri.parse("content://test/tree/p"),
+            ScanResult(items = items, folderCount = 0, truncated = false)
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val text = activity.findViewById<TextView>(R.id.text_summary).text.toString()
+        assertFalse("Null-Meldung ist Rauschen:\n$text", text.contains("nicht lesbar"))
+    }
+
     @Test
     fun `abschnitte mit auswahl tragen kein aktiv-label`() {
         val activity = activity()

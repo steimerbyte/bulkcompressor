@@ -166,26 +166,51 @@ MP4-Container.
 Das ist der Teil, der unter Android wirklich schwierig ist, deshalb
 hier offen:
 
+**Woher der Zeitpunkt kommt.** Drei Stufen, in dieser Reihenfolge:
+
+1. **Änderungszeit der Quelldatei.** Der Messwert. Liefert der Anbieter
+   keine (0) oder eine aus der Zukunft, ist er unbrauchbar.
+2. **Datum aus dem Dateinamen.** `IMG_20250815_142530`, `Screenshot
+   2025-08-15` und `20250815-142530` werden erkannt — nützlich für
+   Screenshots, Messenger-Dateien und Kameras, die die Zeit nur im Namen
+   führen. Reine Ziffernfolgen mitten im Namen gelten nicht als Datum;
+   ein Name mit mehreren Zahlenfolgen darf das nächste Muster versuchen
+   (`31.02.` ist kein Datum).
+3. **Nichts.** Dann steht die Laufzeit in der Datei — und im Protokoll
+   steht, dass kein Datum ermittelbar war. Ein roher 0-Wert wird nie
+   gesetzt, sonst landete die Datei in der Galerie auf 1970.
+
+Einmal je Datei entschieden, gilt derselbe Wert an **beiden** Stellen:
+Dateizeit und Container-Kopf. Zwei getrennte Werte würden dazu führen,
+dass die Galerie nach dem einen sortiert und den anderen anzeigt.
+
 * **Bilder:** Die Aufnahmezeit steckt in den EXIF-Daten (`DateTimeOriginal`).
   Die App kopiert sie samt GPS, Kamera und Belichtungswerten in die neue
   Datei. Google Photos und die meisten Galerien sortieren danach — die
   Chronologie bleibt also auch dann richtig, wenn der Dateizeitstempel
   neu ist.
-* **Videos:** Haben keine Aufnahmezeit in den Metadaten, die Android
-  verlässlich ausliest. Hier zählt der Dateizeitstempel — und den darf
-  eine App über SAF **nicht** setzen (die Spalte `COLUMN_LAST_MODIFIED`
-  ist schreibgeschützt).
-* **Ausnahme:** Mit dem Berechtigungsschalter **„Zugriff auf alle
-  Dateien"** (optional, per Knopf in der App) löst die App den Pfad auf
-  und setzt den Änderungszeitstempel zurück. Die App prüft danach nach,
+* **Videos:** Haben kein EXIF, aber `creation_time` in den Kopfboxen
+  `mvhd`, `tkhd` und `mdhd` (ISO/IEC 14496-12, Sekunden seit 1904,
+  vorzeichenlos). `MediaMuxer` setzt diese Felder beim Schreiben auf
+  **jetzt**. Die App berichtigt sie deshalb nach dem Schließen des
+  Muxers auf den ermittelten Zeitpunkt — sonst steht im Video der
+  Kompressionszeitpunkt, und die Galerie sortiert es ans Ende.
+* **Dateizeit:** Über SAF ist `COLUMN_LAST_MODIFIED` **schreibgeschützt**.
+  Deshalb der Ausnahmeweg: mit dem Berechtigungsschalter **„Zugriff auf
+  alle Dateien"** (optional, per Knopf in der App) löst die App den Pfad
+  auf und setzt den Änderungszeitstempel zurück. Sie prüft danach nach,
   ob der Wert wirklich an der Datei steht, und meldet es im Protokoll,
   wenn nicht.
 
 **Praktische Empfehlung:** Ohne „Zugriff auf alle Dateien" im Modus
 **Original behalten** arbeiten — dann bleibt das Original mit seinem
-Zeitstempel liegen, und die neue Datei erbt über EXIF die Aufnahmezeit.
-Wer in-place ersetzen will und die Chronologie braucht, schaltet den
-Zugriff ein.
+Zeitstempel liegen, und die neue Datei trägt die Aufnahmezeit in EXIF
+beziehungsweise im MP4-Kopf. Wer in-place ersetzen will und die
+Chronologie braucht, schaltet den Zugriff ein. Gesetzt wird dann über den
+aufgelösten Dateipfad (`setLastModified`), nicht über SAF, und der Wert
+wird anschließend **zurückgelesen**: steht er nicht mit höchstens zwei
+Sekunden Abweichung an der Datei, gilt das Setzen als gescheitert und der
+Hinweis erscheint genau einmal im Protokoll.
 
 ## Marker, Wiederholung, Prüfung
 
@@ -210,6 +235,17 @@ neuen Bilder zu sehen, nicht alles, was beim Start ohnehin übersprungen
 würde. Eine gekürzte Liste ist sichtbar begründet: die Zusammenfassung
 nennt die Zahl („· 12 bereits komprimiert"), das Protokoll je Ordner und
 am Ende die Laufzeit, die der Blick in den Dateikopf gekostet hat.
+
+**Wie der Marker gelesen wird.** Über den Lesestrom
+(`openInputStream`), nicht über den Dateideskriptor: Anbieter, die keine
+seekbare Datei liefern (Cloud-Speicher, Downloads, manche Geräteanbieter),
+geben eine Pipe, und ein Sprung ans Dateiende scheitert dort. Der
+Deskriptor wird nur als Abkürzung versucht, wenn eine echte Datei
+dahinterliegt. Scheitert beides, ist der Zustand **unbekannt** — nicht
+„nicht komprimiert": die Datei bleibt auf der Liste, wird aber nicht
+stillschweigend ein zweites Mal verkleinert, und die Zusammenfassung sagt
+es („· 4 Marker nicht lesbar"). Ein unbekannter Zustand als „neu" wäre
+genau der Fehler, den der Marker verhindern soll.
 
 Der Job prüft den Marker unmittelbar vor jeder Datei **noch einmal** —
 zwischen Ordnerauswahl und Start kann ein anderer Lauf dieselbe Datei
@@ -480,6 +516,34 @@ eigenen Code.
 Gebaut gegen Android 15 (`compileSdk`/`targetSdk` 35), `minSdk` ist 24.
 Auf einem echten Gerät wurde diese Fassung noch nicht ausgeführt — siehe
 **Grenzen**.
+
+## Release
+
+Ein Release entsteht über **einen** Weg:
+
+```bash
+tools/release.sh            # Suite → bauen → prüfen → veröffentlichen
+tools/release.sh --dry-run  # derselbe Ablauf, aber ohne gh release
+```
+
+Der Ablauf ist eine Sperre, keine Bequemlichkeit:
+
+1. **Arbeitsbaum sauber?** Was nicht committet ist, wird nicht veröffentlicht.
+2. **`versionCode` erhöht?** Gegen die letzte Marke geprüft — ohne Erhöhung
+   behandelt Android den Wechsel als Neuinstallation, und der alte
+   App-Cache überlebt.
+3. **Volle Testsuite.** Ergebnisse aus `build/` werden vorher gelöscht, und
+   danach wird ausgezählt: `tests > 0` und `failures == 0`. Ein Lauf, der
+   nichts geprüft hat, ist kein grüner Lauf.
+4. **APK prüfen, nicht den Quelltext:** `aapt2 dump badging` (Version muss
+   zur Marke passen), `apksigner verify`.
+5. **Zurücklesen:** nach `gh release create` wird die veröffentlichte Datei
+   heruntergeladen und erneut geprüft. Ein erfolgreicher lokaler Bau sagt
+   nichts über das, was der Nutzer bekommt.
+
+Unabhängig vom Skript hängt auch `assembleRelease` in
+`app/build.gradle.kts` an der Testsuite — ein von Hand getippter Bau kann
+den Schritt also nicht vergessen.
 
 ## Grenzen (ehrlich)
 

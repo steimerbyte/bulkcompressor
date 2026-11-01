@@ -15,9 +15,13 @@ import com.steimerbyte.bulkcompressor.engine.MemoryGuard
 import com.steimerbyte.bulkcompressor.engine.MetaRestore
 import com.steimerbyte.bulkcompressor.engine.Naming
 import com.steimerbyte.bulkcompressor.engine.PresetEngine
+import com.steimerbyte.bulkcompressor.engine.TimestampResolver
 import com.steimerbyte.bulkcompressor.engine.VideoPlan
 import com.steimerbyte.bulkcompressor.engine.VideoTranscoder
 import com.steimerbyte.bulkcompressor.engine.tag.CompressionTag
+import com.steimerbyte.bulkcompressor.engine.tag.MarkerProbe
+import com.steimerbyte.bulkcompressor.engine.tag.MarkerReading
+import com.steimerbyte.bulkcompressor.engine.tag.MarkerState
 import com.steimerbyte.bulkcompressor.engine.tag.TagFile
 import com.steimerbyte.bulkcompressor.engine.tag.TagStore
 import com.steimerbyte.bulkcompressor.engine.verify.Verifier
@@ -44,7 +48,17 @@ class CompressionJob(
     private val treeUri: Uri,
     private val items: List<MediaItem>,
     private val settings: CompressSettings,
-    private val cancelled: AtomicBoolean
+    private val cancelled: AtomicBoolean,
+    /**
+     * Einzige Quelle fuer "steht ein Marker in dieser Datei".
+     *
+     * Standard ist der echte Leser; hereingereicht, weil die Entscheidung
+     * "komprimieren oder ueberspringen" sonst nicht ohne Codec pruefbar
+     * waere. Es ist bewusst **kein** Testhaken im Produktionspfad: der
+     * Dienst uebergibt nichts, und der Standard ist genau der Leser, den
+     * auch der Scan benutzt.
+     */
+    private val probe: MarkerProbe = TagStore(context.contentResolver)
 ) {
 
     private val resolver: ContentResolver get() = context.contentResolver
@@ -59,8 +73,31 @@ class CompressionJob(
     private var resumeBase = 0
     private var failed = 0
     private var skipped = 0
+
+    /**
+     * Dateien, deren Marker sich nicht lesen liess.
+     *
+     * Eigener Zaehler neben [skipped], weil es eine andere Aussage ist:
+     * "schon erledigt" ist belegt, "unbekannt" ist es nicht. Faellt dieser
+     * Zaehler weg, sieht ein Lauf, der wegen unlesbarer Marker nichts
+     * getan hat, aus wie "nichts zu tun" - der Nutzer waehlt denselben
+     * Ordner wieder und bekommt wieder nichts.
+     */
+    private var unreadable = 0
     private val folderNames = HashMap<String, MutableSet<String>>()
     private var timestampFailureLogged = false
+
+    /**
+     * Der Zeitpunkt, der im Ergebnis stehen soll - einmal je Datei
+     * entschieden.
+     *
+     * Einmal, weil er an zwei Stellen landet: in der Dateizeit des Ziels
+     * und in der Aufnahmezeit des MP4-Kopfes. Zwei getrennte Aufrufe
+     * koennten bei einer Datei ohne Quellzeit (oder mit unplausibler)
+     * auseinanderlaufen - und dann sortiert die Galerie nach dem einen
+     * Wert und zeigt den anderen an.
+     */
+    private var stamp = TimestampResolver.Decision(0L, TimestampResolver.Source.NONE)
     private var runStartedAt = 0L
     private var fileStartedAt = 0L
 
@@ -79,8 +116,19 @@ class CompressionJob(
     /** Marker der aktuellen Quelldatei, `null` wenn sie unmarkiert ist. */
     private var sourceTag: CompressionTag? = null
 
-    /** Marker-Leser fuer Dokumente; erst bei Bedarf angelegt. */
-    private val tagStore: TagStore by lazy { TagStore(context.contentResolver) }
+    /**
+     * Einordnung "schon komprimiert".
+     *
+     * Getrennt vom Job, damit die Regel ohne Datei und ohne Codec pruefbar
+     * ist. Die Zaehler fuehrt der Job, weil der Balken, der Journal-Stand
+     * und der Endzustand aus derselben Quelle kommen muessen - bei einem
+     * fortgesetzten Lauf setzt sie das Journal.
+     */
+    private val gate = MarkerGate(probe, settings.ignoreCompressionTag)
+
+    /** Erste unlesbare Datei mit Grund - fuer die sichtbare Zusammenfassung. */
+    private var firstUnreadableName = ""
+    private var firstUnreadableReason = ""
 
     fun run() {
         runStartedAt = System.currentTimeMillis()
@@ -160,30 +208,24 @@ class CompressionJob(
                 storageStopped = true
                 break
             }
-            // Marker unmittelbar vor der Datei lesen, nicht aus dem Scan
-            // uebernehmen: zwischen Ordnerauswahl und Start kann ein
-            // anderer Lauf dieselbe Datei erwischt haben.
-            if (!settings.ignoreCompressionTag) {
-                val existing = tagStore.read(item.uri)
-                if (existing != null) {
-                    skipped++
-                    logLine(
-                        "SKIP ${item.displayName}: bereits komprimiert (${existing.describe()})"
-                    )
-                    Log.i(
-                        "Job",
-                        "uebersprungen: ${item.displayName} · Grund: Marker vorhanden" +
-                            " (${existing.describe()}) · Einstellung: Marker beachten" +
-                            " · ${formatSize(item.sizeBytes)}"
-                    )
-                    journal?.mark(item.docId, RunJournal.Result.SKIP, item.sizeBytes, 0, "bereits komprimiert")
-                    done = resumeBase + index + 1
-                    // Uebersprungene Dateien zaehlen fuer den Balken mit,
-                    // vorher blieb er stehen und sah nach Haenger aus.
-                    publish(index + 1, item.displayName, 0f)
-                    continue
-                }
+            // Einordnung unmittelbar vor der Datei, nicht aus dem Scan
+            // uebernommen: zwischen Ordnerauswahl und Start kann ein
+            // anderer Lauf dieselbe Datei erwischt haben. Der Grund fuer
+            // das Ueberspringen gehoert in dieselbe Entscheidung - sonst
+            // teilen sich zwei Stellen die Wahrheit.
+            val verdict = gate.classify(item.uri)
+            if (verdict.decision != GateDecision.COMPRESS) {
+                recordSkip(item, verdict)
+                done = resumeBase + index + 1
+                // Uebersprungene Dateien zaehlen fuer den Balken mit,
+                // vorher blieb er stehen und sah nach Haenger aus.
+                publish(index + 1, item.displayName, 0f)
+                continue
             }
+            // Der Marker der Quelle wandert in den neuen Marker: `runs`
+            // zaehlt sonst bei jedem Lauf wieder bei 1 an, und die Zahl vor
+            // dem ersten Lauf ginge verloren.
+            sourceTag = verdict.tag
             // Vor jeder Datei: bei Speicherdruck warten, statt den Prozess
             // deswegen zu verlieren.
             MemoryGuard.pauseBefore { cancelled.get() }
@@ -247,6 +289,7 @@ class CompressionJob(
                 done = done,
                 failed = failed,
                 skipped = skipped,
+                unreadable = unreadable,
                 overall = if (cancelledNow) JobBus.state.overall else 1f,
                 beforeBytes = beforeBytes,
                 afterBytes = afterBytes,
@@ -263,6 +306,28 @@ class CompressionJob(
                 if (cancelledNow) "Abgebrochen nach $done von ${work.size} Dateien"
                 else "Fertig: $done bearbeitet, $skipped uebersprungen, $failed fehlgeschlagen"
             )
+        }
+        // Ein Lauf, der ausschliesslich an unlesbaren Markern gescheitert
+        // ist, hat nichts geschafft - "Fertig" waere hier die Unwahrheit.
+        // Der Grund steht in einer eigenen Zeile und im Endzustand, nicht
+        // nur im Protokoll: sonst waehlt der Nutzer denselben Ordner noch
+        // einmal und bekommt wieder nichts.
+        if (unreadable > 0) {
+            logLine(
+                "SKIP-GESAMT: $unreadable Dateien nicht bearbeitet, weil der Marker nicht" +
+                    " lesbar war (zuerst $firstUnreadableName: $firstUnreadableReason)." +
+                    " Die Dateien sind unangetastet - ihr Zustand ist unbekannt."
+            )
+            Log.w(
+                "Job",
+                "unlesbare Marker: $unreadable von ${work.size} Dateien · zuerst" +
+                    " $firstUnreadableName · Grund: $firstUnreadableReason" +
+                    " · Einstellung: Marker beachten"
+            )
+        }
+        if (didNothing(work.size, cancelledNow)) {
+            logLine(errorSummary())
+            Log.e("Job", errorSummary())
         }
         checkpoint("Endstand")
         if (MemoryGuard.pauseCount() > 0) {
@@ -288,7 +353,8 @@ class CompressionJob(
             "Summen: ${formatSize(beforeBytes)} -> ${formatSize(afterBytes)}" +
                 " (${percent(beforeBytes, afterBytes)})" +
                 " · $done bearbeitet · $skipped uebersprungen · $failed fehlgeschlagen" +
-                if (cancelledNow) " · abgebrochen" else ""
+                (if (unreadable > 0) " · $unreadable Marker nicht lesbar" else "") +
+                (if (cancelledNow) " · abgebrochen" else "")
         )
         Log.i(
             "Job",
@@ -383,6 +449,7 @@ class CompressionJob(
             "Job",
             "$label: $done/${items.size} verarbeitet · ${successCount()} Erfolge" +
                 " · $skipped uebersprungen · $failed Fehler" +
+                (if (unreadable > 0) " · $unreadable Marker nicht lesbar" else "") +
                 " · ${formatSize(savedTotal())} gespart" +
                 " · $elapsed ms Laufzeit (${String.format(Locale.US, "%.0f", perFile)} ms/Datei)" +
                 " · ${throughput()} MB/s" +
@@ -390,7 +457,13 @@ class CompressionJob(
         )
     }
 
-    private fun successCount(): Int = (done - skipped - failed).coerceAtLeast(0)
+    /**
+     * Erfolge sind, was uebrig bleibt - nur duerfen weder uebersprungene
+     * noch unlesbare Dateien mitzaehlen. Frueher fehlte der zweite Abzug;
+     * ein Lauf aus lauter unlesbaren Markern meldete damit Erfolge, die es
+     * nicht gab.
+     */
+    private fun successCount(): Int = (done - skipped - unreadable - failed).coerceAtLeast(0)
 
     private fun savedTotal(): Long = (beforeBytes - afterBytes).coerceAtLeast(0)
 
@@ -440,6 +513,81 @@ class CompressionJob(
         Log.i("Job", line)
     }
 
+    /**
+     * Haelt eine uebersprungene Datei fest - mit Grund, Zaehler, Journal
+     * und einer Zeile in der Oberflaeche.
+     *
+     * Die beiden Gruende werden bewusst getrennt gezaehlt und getrennt
+     * formuliert: "Marker vorhanden" ist ein belegter Zustand, "Marker
+     * nicht lesbar" heisst unbekannt. In einer gemeinsamen Zeile
+     * "(uebersprungen)" waere der zweite Fall fuer den Nutzer nicht von
+     * "nichts zu tun" zu unterscheiden - und das ist der Fehlerbericht,
+     * aus dem dieser Umbau kommt.
+     */
+    private fun recordSkip(item: MediaItem, verdict: GateVerdict) {
+        val cause = verdict.describeCause()
+        if (verdict.decision == GateDecision.SKIP_UNREADABLE) {
+            unreadable++
+            if (firstUnreadableName.isEmpty()) {
+                firstUnreadableName = item.displayName
+                firstUnreadableReason = verdict.reason.ifBlank { GateVerdict.UNKNOWN_REASON }
+            }
+            logLine("SKIP ${item.displayName}: $cause")
+            // Warnstufe, nicht Info: der Zustand der Datei ist unbekannt
+            // und der Lauf hat sie deshalb absichtlich liegen gelassen.
+            // Ein stilles "uebersprungen" waere die Behauptung, es sei
+            // nichts zu tun gewesen.
+            Log.w(
+                "Job",
+                "uebersprungen: ${item.displayName} · $cause · nicht komprimiert," +
+                    " Zustand unbekannt · ${formatSize(item.sizeBytes)}"
+            )
+            // Als Fehlschlag, nicht als Uebersprung: der Zustand ist
+            // unbekannt, die Datei also nicht erledigt. Ein fortgesetzter
+            // Lauf nimmt sie damit wieder auf - beim zweiten Versuch kann
+            // der Leser durchaus gelingen.
+            journal?.mark(
+                item.docId,
+                RunJournal.Result.FAIL,
+                item.sizeBytes,
+                0,
+                "Marker nicht lesbar: $firstUnreadableReason".take(80)
+            )
+            return
+        }
+        skipped++
+        logLine("SKIP ${item.displayName}: $cause")
+        Log.i(
+            "Job",
+            "uebersprungen: ${item.displayName} · Grund: Marker vorhanden" +
+                (verdict.tag?.let { " (${it.describe()})" } ?: "") +
+                " · Einstellung: Marker beachten" +
+                " · ${formatSize(item.sizeBytes)}"
+        )
+        journal?.mark(item.docId, RunJournal.Result.SKIP, item.sizeBytes, 0, "bereits komprimiert")
+    }
+
+    /**
+     * Hat dieser Lauf nichts geschafft? Dann darf er nicht "Fertig"
+     * melden - genau dieser Satz war der Fehlerbericht: ein Ordner galt
+     * als erledigt, obwohl keine einzige Datei angefasst wurde.
+     */
+    private fun didNothing(total: Int, cancelledNow: Boolean): Boolean {
+        if (cancelledNow || storageStopped || total <= 0) return false
+        return successCount() == 0 && (unreadable > 0 || failed > 0)
+    }
+
+    /** Der Grund fuer den sichtbaren Fehlerendzustand, in einer Zeile. */
+    private fun errorSummary(): String = buildString {
+        append("NICHT FERTIG: keine Datei bearbeitet")
+        if (unreadable > 0) {
+            append(" · $unreadable mit nicht lesbarem Marker (zuerst $firstUnreadableName:" +
+                " ${firstUnreadableReason})")
+        }
+        if (failed > 0) append(" · $failed fehlgeschlagen")
+        append(" · die Dateien sind unangetastet")
+    }
+
     private fun describeSettings(): String {
         val video = when (settings.videoMode) {
             VideoMode.BITRATE -> "Bitrate ${settings.bitratePercent}%"
@@ -455,9 +603,14 @@ class CompressionJob(
 
     private fun process(item: MediaItem, index: Int) {
         fileStartedAt = System.currentTimeMillis()
-        // Der Marker wird hier gehalten, damit [deliver] den Lauf-Zaehler
-        // fortschreiben kann, statt bei 1 zu beginnen.
-        sourceTag = tagStore.read(item.uri)
+        // Zeitpunkt bestimmen, bevor irgendetwas geschrieben wird: er
+        // gehoert in den Container (MP4-Kopf) und in die Dateizeit, und
+        // beide muessen denselben Wert tragen.
+        stamp = if (settings.keepTimestamps) {
+            TimestampResolver.decide(item.lastModified, item.displayName)
+        } else {
+            TimestampResolver.Decision(0L, TimestampResolver.Source.NONE)
+        }
         val temp = File(context.cacheDir, "bulk_${System.currentTimeMillis()}.tmp")
         try {
             when (item.kind) {
@@ -524,7 +677,8 @@ class CompressionJob(
             orientationHint = info.rotation,
             onProgress = { publish(index, item.displayName, it) },
             isCancelled = { cancelled.get() },
-            throttle = throttle
+            throttle = throttle,
+            creationTimeMillis = stamp.millis
         )
 
         val actual = try {
@@ -627,6 +781,11 @@ class CompressionJob(
      * Videos die Spur. Die Spur-Pruefung geht ueber den echten Extraktor -
      * ein Container, den er nicht oeffnen kann, ist kaputt, egal was der
      * Muxer beim Schreiben gemeldet hat.
+     *
+     * Der Marker-Befund kommt aus [probe] - demselben Leser, mit dem der
+     * Lauf vorher eingeordnet hat. Ein zweiter Leser haette zwei
+     * Wahrheiten: hier "geprueft", beim naechsten Scan "nicht
+     * komprimiert".
      */
     private fun verifyAtPlace(uri: Uri, mime: String, expectedBytes: Long) = Verifier.verifyDocument(
         resolver = resolver,
@@ -634,8 +793,41 @@ class CompressionJob(
         expectMime = mime,
         expectedBytes = expectedBytes,
         expectTag = true,
-        probeTracks = { Verifier.trackProblem(resolver, it) }
+        probeTracks = { Verifier.trackProblem(resolver, it) },
+        probe = probe::probe
     )
+
+    /**
+     * Beweist nach dem Ablegen, dass die Datei als bearbeitet erkennbar
+     * ist.
+     *
+     * Das ist der Kern des Umbaus: der Marker wird nicht "geschrieben und
+     * gehofft", sondern am Ziel erneut gelesen. Nur [MarkerState.MARKED]
+     * zaehlt. Ein [MarkerState.CLEAR] heisst, der Marker ist beim
+     * Ersetzen verloren gegangen - die Datei waere fuer den naechsten
+     * Scan unkomprimiert und wuerde ein zweites Mal verlustbehaftet
+     * bearbeitet. [MarkerState.UNREADABLE] heisst, der Beweis fehlt: das
+     * ist kein Erfolg, sondern ein offener Befund mit Grund.
+     *
+     * Liefert `null`, wenn der Beweis steht, sonst den Grund.
+     */
+    private fun proveDelivered(uri: Uri): String? {
+        val reading = runCatching { probe.probe(uri) }.getOrElse {
+            MarkerReading(
+                state = MarkerState.UNREADABLE,
+                reason = it.message ?: it.javaClass.simpleName
+            )
+        }
+        return when (reading.state) {
+            MarkerState.MARKED -> null
+            MarkerState.CLEAR ->
+                "Marker fehlt am Ziel - die Datei waere beim naechsten Lauf wieder offen"
+            MarkerState.UNREADABLE ->
+                "Marker am Ziel nicht lesbar (" +
+                    reading.reason.ifBlank { GateVerdict.UNKNOWN_REASON } +
+                    ") - der Beweis fehlt, die Datei ist aber geschrieben"
+        }
+    }
 
     private fun deliver(
         item: MediaItem,
@@ -808,12 +1000,44 @@ class CompressionJob(
             }
         }
 
+        // Beweis am Ziel: der Marker muss dort lesbar stehen. Die
+        // Container- und Groessenpruefung sagt, dass die Datei heil ist;
+        // sie sagt nicht, dass der naechste Lauf sie als erledigt
+        // erkennt. Genau diese Luecke war der Fehlerbericht.
+        val proof = proveDelivered(target)
+        if (proof != null) {
+            failed++
+            logLine("FEHLER ${item.displayName}: $proof")
+            Log.e(
+                "Job",
+                "fehlgeschlagen: ${item.displayName} · Marker-Beweis am Ziel: $proof" +
+                    " · Zieldatei ${formatSize(after)} · Modus ${settings.outputMode.name}"
+            )
+            return
+        }
+        val where = if (replaceInPlace) "In-Place" else "neue Datei"
+        Log.i("Job", "${item.displayName} · Marker am Ziel bestaetigt ($where)")
+
         if (settings.keepTimestamps) {
-            val restored = MetaRestore.applyTimestamp(resolver, target, item.lastModified)
+            // Der Zeitpunkt wurde in `process` entschieden, nicht hier: der
+            // MP4-Kopf traegt ihn schon, und Dateizeit und Containerzeit
+            // duerfen nicht auseinanderlaufen. Ein Anbieter, der keine
+            // Aenderungszeit liefert, gibt 0 - ein roher 0-Wert wuerde in
+            // der Galerie auf 1970 landen, deshalb greift dann das Datum
+            // aus dem Dateinamen.
+            val decision = stamp
+            val restored = TimestampResolver.apply(resolver, target, decision)
             if (restored) {
-                Log.i("Job", "${item.displayName} · Aenderungszeit auf ${item.lastModified} zurueckgesetzt")
-            }
-            if (!restored && !timestampFailureLogged) {
+                Log.i(
+                    "Job",
+                    "${item.displayName} · Aenderungszeit auf ${TimestampResolver.format(decision.millis)}" +
+                        " zurueckgesetzt · Quelle ${decision.source.name}" +
+                        (if (decision.detail.isEmpty()) "" else " (${decision.detail})")
+                )
+            } else if (decision.source != TimestampResolver.Source.NONE && !timestampFailureLogged) {
+                // Nur ein gescheitertes Setzen verdient einen Hinweis.
+                // "Kein Datum ermittelbar" ist kein Fehler, sondern der
+                // bekannte Fall einer Quelle ohne jede Zeitangabe.
                 timestampFailureLogged = true
                 logLine(
                     "HINWEIS: Aenderungszeit liess sich nicht zuruecksetzen - " +
@@ -821,7 +1045,8 @@ class CompressionJob(
                 )
                 Log.w(
                     "Job",
-                    "Hinweis: Aenderungszeit nicht zurueckgesetzt (${item.displayName})"
+                    "Hinweis: Aenderungszeit nicht zurueckgesetzt (${item.displayName})" +
+                        " · Quelle ${decision.source.name}"
                 )
             }
         }
@@ -933,6 +1158,7 @@ class CompressionJob(
                 done = doneBefore,
                 failed = failed,
                 skipped = skipped,
+                unreadable = unreadable,
                 currentName = name,
                 overall = overall.coerceIn(0f, 1f),
                 beforeBytes = beforeBytes,

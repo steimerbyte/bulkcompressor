@@ -21,6 +21,13 @@ import java.io.RandomAccessFile
  *    Groesse 0 ("reicht bis Dateiende") wuerde unsere Box verschlucken;
  *    ihr Groessenfeld wird deshalb vorher auf den tatsaechlichen Wert
  *    gesetzt. Alles andere wird nicht angefasst, sondern gemeldet.
+ * 3. **Ein vorhandener Marker wird ersetzt, nicht verdoppelt.** Beim
+ *    zweiten Lauf waechst der Zaehler von `runs=1` auf `runs=2`; haengte
+ *    man einfach an, stuenden zwei Marker in derselben Datei, und welcher
+ *    gewinnt, haengt davon ab, ob von vorne oder von hinten gesucht wird.
+ *    [findTag] nimmt den ersten, [findTagInTail] den letzten - bei zwei
+ *    Markern waeren sich Pfad- und Strom-Leser also uneinig, und genau
+ *    darueber wuerde der Filter den Job anders einordnen als der Scan.
  */
 internal object Mp4Tag {
 
@@ -32,6 +39,13 @@ internal object Mp4Tag {
 
     /** Mehr als das wird vom Marker nicht gelesen - er ist eine Zeile. */
     private const val MAX_PAYLOAD = 4096
+
+    /**
+     * Kopf einer `uuid`-Box: 4 Byte Groesse, 4 Byte Typ, 16 Byte Kennung.
+     * Dieselbe Zahl steht in [findTagInTail] als Untergrenze - die beiden
+     * Stellen beschreiben dasselbe Format und muessen zusammenpassen.
+     */
+    private const val HEADER = 24
 
     private const val TYPE_UUID = "uuid"
     private const val TYPE_FTYP = "ftyp"
@@ -113,11 +127,19 @@ internal object Mp4Tag {
     }
 
     /**
-     * Haengt den Marker an. Gibt `null` zurueck, wenn es geklappt hat -
-     * sonst den Grund, warum nichts geschrieben wurde. Ein Container, der
-     * nicht sauber gelesen werden kann, wird **nicht** beschnitten: eine
-     * Datei, die sich nicht ganz verstehen laesst, ist kein Ort fuer
-     * Reparaturversuche.
+     * Schreibt den Marker: ersetzt einen vorhandenen, sonst angehaengt.
+     *
+     * Gibt `null` zurueck, wenn es geklappt hat - sonst den Grund, warum
+     * nichts geschrieben wurde. Ein Container, der nicht sauber gelesen
+     * werden kann, wird **nicht** beschnitten: eine Datei, die sich nicht
+     * ganz verstehen laesst, ist kein Ort fuer Reparaturversuche.
+     *
+     * Ersetzen ist kein Um-Muxen: die bestehende Box hat eine feste
+     * Laenge, und die neue Zeile ist laenger (der Zaehler waechst um eine
+     * Stelle) oder kuerzer. Sie wird deshalb an derselben Stelle neu
+     * geschrieben und die Datei dahinter nachgerueckt - alle anderen
+     * Bytes bleiben in ihrer Reihenfolge, nur ihre Offsets verschieben
+     * sich mit der Box.
      */
     fun appendTag(file: File, payload: String): String? {
         val bytes = payload.toByteArray(Charsets.UTF_8)
@@ -129,15 +151,60 @@ internal object Mp4Tag {
             if (boxes.isEmpty()) return "keine Box-Tabelle"
             if (boxes.first().type != TYPE_FTYP) return "beginnt nicht mit ftyp"
             closeOpenEnded(raf, boxes)?.let { reason -> return reason }
+            // Nach dem Schliessen neu lesen: die letzte Box hat jetzt ihre
+            // echte Groesse, und eine vorhandene Marker-Box steht damit
+            // erstmals als regulaere Box in der Tabelle.
+            val current = walk(raf) ?: return "Box-Tabelle nach dem Schliessen unlesbar"
+            val existing = current.lastOrNull { it.type == TYPE_UUID && isOurBox(raf, it) }
             return runCatching {
-                raf.seek(raf.length())
-                raf.writeInt(24 + bytes.size)
-                raf.write(TYPE_UUID.toByteArray(Charsets.US_ASCII))
-                raf.write(USER_TYPE)
-                raf.write(bytes)
+                if (existing == null) append(raf, bytes) else replace(raf, existing, bytes)
                 null
             }.getOrElse { "Box nicht schreibbar: ${it.message ?: it.javaClass.simpleName}" }
         }
+    }
+
+    /** Haengt eine neue Box hinter das Dateiende. */
+    private fun append(raf: RandomAccessFile, bytes: ByteArray) {
+        raf.seek(raf.length())
+        raf.writeInt(HEADER + bytes.size)
+        raf.write(TYPE_UUID.toByteArray(Charsets.US_ASCII))
+        raf.write(USER_TYPE)
+        raf.write(bytes)
+    }
+
+    /**
+     * Schreibt die Box [box] mit neuem Inhalt und rueckt den Rest nach.
+     *
+     * Der Marker steht immer am Dateiende (so legt ihn [append] an), der
+     * Rest ist also leer und das Nachruecken entfaellt. Der allgemeine
+     * Weg bleibt trotzdem drin, weil eine fremde Datei die Box auch
+     * woanders tragen kann - dann muss die Verschiebung stimmen.
+     */
+    private fun replace(raf: RandomAccessFile, box: Box, bytes: ByteArray) {
+        val replacement = HEADER + bytes.size
+        val tail = box.end
+        val suffix = if (raf.length() > tail) {
+            raf.seek(tail)
+            ByteArray((raf.length() - tail).toInt()).also { raf.readFully(it) }
+        } else {
+            ByteArray(0)
+        }
+        raf.seek(box.offset)
+        raf.writeInt(replacement)
+        raf.write(TYPE_UUID.toByteArray(Charsets.US_ASCII))
+        raf.write(USER_TYPE)
+        raf.write(bytes)
+        raf.write(suffix)
+        raf.setLength(box.offset + replacement + suffix.size)
+    }
+
+    /** Traegt diese `uuid`-Box unsere Kennung? */
+    private fun isOurBox(raf: RandomAccessFile, box: Box): Boolean {
+        if (box.size < HEADER) return false
+        raf.seek(box.offset + 8)
+        val userType = ByteArray(USER_TYPE.size)
+        raf.readFully(userType)
+        return userType.contentEquals(USER_TYPE)
     }
 
     /**

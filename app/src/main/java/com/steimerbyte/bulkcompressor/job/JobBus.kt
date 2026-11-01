@@ -17,6 +17,17 @@ object JobBus {
         val done: Int = 0,
         val failed: Int = 0,
         val skipped: Int = 0,
+        /**
+         * Dateien, deren Marker nicht lesbar war.
+         *
+         * Eigener Zaehler neben [skipped], weil es eine andere Aussage
+         * ist: "schon erledigt" ist belegt, "unbekannt" ist es nicht.
+         * Wird beides in eine Zahl geworfen, bleibt genau der Fall
+         * unsichtbar, in dem eine Datei liegen bleibt, ohne dass jemand
+         * sagen kann warum - und der Nutzer sieht einen Lauf, der
+         * "fertig" meldet, obwohl er nichts getan hat.
+         */
+        val unreadable: Int = 0,
         val currentName: String = "",
         val overall: Float = 0f,
         val beforeBytes: Long = 0,

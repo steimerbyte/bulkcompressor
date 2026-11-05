@@ -10,9 +10,6 @@ import android.net.Uri
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
-import android.view.View
-import android.widget.Button
-import android.widget.TextView
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -24,8 +21,9 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.FileNotFoundException
+import java.time.Duration
 import java.util.Collections
-import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -63,7 +61,7 @@ class ScanLiveLineTest {
             // denselben Baum beim Aufbau der Oberflaeche; wuerde er hier
             // stehen, haenge der Start und der Test koennte das Tor nie
             // oeffnen.
-            if (blocked.get() && Looper.myLooper() != Looper.getMainLooper()) gate.await()
+            if (blocked.get() && Looper.myLooper() != Looper.getMainLooper()) gate.acquire()
             log.add("query ${Thread.currentThread().name}")
             val segments = uri.pathSegments
             val documentIndex = segments.indexOf("document")
@@ -112,7 +110,8 @@ class ScanLiveLineTest {
             private const val AUTHORITY = "com.android.externalstorage.documents"
 
             internal val log: MutableList<String> = Collections.synchronizedList(ArrayList())
-            internal val gate = CountDownLatch(1)
+            /** Ein Durchlass je Abfrage: der Test treibt den Scan Schritt fuer Schritt. */
+            internal val gate = Semaphore(0)
             internal val blocked = AtomicBoolean(false)
             internal var children: Map<String, List<Triple<String, String, String>>> = emptyMap()
 
@@ -145,53 +144,76 @@ class ScanLiveLineTest {
 
     @Test
     fun `live zeile zeigt fortschritt und verschwindet nach dem scan`() {
-        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
-        val live = activity.findViewById<TextView>(R.id.text_scan_live)
-        val summary = activity.findViewById<TextView>(R.id.text_summary)
-
-        // Nach dem Vorlauf-Scan steht die Zusammenfassung, nicht die Live-Zeile.
-        assertEquals("Live-Zeile blieb nach dem Scan stehen", View.GONE, live.visibility)
-        assertEquals(View.VISIBLE, summary.visibility)
-
-        // Zweiter Lauf, angehalten: die Zeile muss sichtbar und noch leer sein.
+        // Der Anbieter haelt schon den ersten Zugriff an: der Scan steht,
+        // bevor er ein Ergebnis haben kann. Damit ist jeder Schritt eine
+        // Entscheidung des Tests, kein Zeitrennen.
         SlowProvider.blocked.set(true)
-        activity.findViewById<Button>(R.id.button_rescan).performClick()
-        assertEquals("Live-Zeile wird beim Start nicht gezeigt", View.VISIBLE, live.visibility)
-        assertEquals("Live-Zeile startet mit Inhalt statt leer", "", live.text.toString())
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val state = activity.home()
+        // Derselbe Pfad wie "Neu scannen"; der Start ueber die Composition
+        // haengt an einem Frame und ist hier nicht der Pruefgegenstand.
+        state.folder = activity.contentResolver.persistedUriPermissions
+            .firstOrNull()?.uri
+            ?: Uri.parse("content://com.android.externalstorage.documents/tree/primary%3ATest")
+        activity.startScanForTest()
 
-        SlowProvider.gate.countDown()
-        SlowProvider.blocked.set(false)
+        waitUntil(10_000) { state.scanning }
+        assertTrue("Scan laeuft nicht", state.scanning)
 
+        // Je Abfrage ein Durchlass: der Scan laeuft Schritt fuer Schritt,
+        // und zwischen zwei Schritten steht das, was die Oberflaeche zeigt.
         val seen = ArrayList<String>()
         val deadline = System.currentTimeMillis() + 20_000
         while (System.currentTimeMillis() < deadline) {
-            shadowOf(Looper.getMainLooper()).idle()
-            // Der Text bleibt auch nach dem Verstecken stehen - genau so
-            // ist die letzte Zeile noch lesbar, wenn der Lauf vorbei ist.
-            val text = live.text.toString()
+            SlowProvider.gate.release()
+            pump(20)
+            val text = state.scanLive
             if (text.isNotEmpty() && seen.lastOrNull() != text) seen.add(text)
-            if (live.visibility == View.GONE) break
-            Thread.sleep(2)
+            if (!state.scanning && state.scan != null) break
+            Thread.sleep(1)
         }
-        shadowOf(Looper.getMainLooper()).idle()
+        SlowProvider.blocked.set(false)
+        pump(20)
 
         assertTrue("Live-Zeile blieb leer: $seen", seen.isNotEmpty())
         assertTrue("Keine Zeile mit Dateizahl: $seen", seen.any { it.contains("Dateien") })
         // Jede Datei ist hier "Marker unlesbar" - an der Zahl erkennt der
-        // Benutzer, dass Dateien fehlen, und zwar ohne die Datei-Zeile zu
-        // lesen. Der Grund steht danach in der Zusammenfassung darunter
-        // (siehe unten): die Live-Zeile ist fuer den Lauf zustaendig, die
-        // Zusammenfassung fuer den Befund.
+        // Benutzer, dass Dateien fehlen, ohne die Datei-Zeile zu lesen.
         assertTrue(
             "Kein Lesefehler-Zaehler in der Live-Zeile: $seen",
             seen.any { it.contains("Marker unlesbar") }
         )
 
-        assertEquals("Live-Zeile blieb nach dem Scan stehen", View.GONE, live.visibility)
-        assertEquals(View.VISIBLE, summary.visibility)
-        // Der Grund gehoert in die Karte, nicht nur in die Logdatei: der
-        // Anbieter konnte keine Datei oeffnen, und das ist genau die Frage,
-        // die der Benutzer sonst per Kabel beantworten muesste.
-        assertTrue("Grund fehlt in der Zusammenfassung: ${summary.text}", summary.text.contains("FileNotFoundException"))
+        // Nach dem Scan steht die Zeile nicht mehr: an ihrer Stelle steht
+        // die Zusammenfassung in der Karte.
+        assertEquals("Live-Zeile blieb nach dem Scan stehen", "", state.scanLive)
+        assertTrue("Scan fehlt", state.scan != null)
+        assertTrue(
+            "Marker-Zaehler fehlt: ${state.scan?.markersUnreadable}",
+            (state.scan?.markersUnreadable ?: 0) > 0
+        )
+        // Der Grund gehoert in die Karte, nicht nur in die Logdatei.
+        assertTrue(
+            "Grund fehlt: ${state.scan?.markerReason}",
+            state.scan?.markerReason?.contains("FileNotFoundException") == true
+        )
+    }
+
+    /**
+     * Ein Bild weiterspulen. `idle()` allein reicht nicht: die
+     * Neuzusammensetzung haengt an einem Frame, und Robolectric laesst die
+     * Uhr nur mit `idleFor` laufen.
+     */
+    private fun pump(frameMs: Long = 20) {
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(frameMs))
+    }
+
+    /** Pumpt den Haupt-Looper, bis die Bedingung stimmt oder die Zeit um ist. */
+    private fun waitUntil(timeoutMs: Long, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!condition() && System.currentTimeMillis() < deadline) {
+            pump(20)
+            Thread.sleep(2)
+        }
     }
 }

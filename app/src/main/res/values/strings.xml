@@ -1,133 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Nur noch, was ausserhalb von Compose gebraucht wird: Manifest-Label,
+    Titel der Statistikseite, Kanal und Abbruchknopf der Benachrichtigung.
+    Alle sichtbaren Texte der Bildschirme stehen im Code (Compose).
+-->
 <resources>
     <string name="app_name">Bulk Compressor</string>
-
-    <string name="stats_title">● SPEICHER</string>
-    <string name="stats_heap_label">APP-HEAP</string>
-    <string name="stats_state_ok">FREI</string>
-    <string name="stats_state_throttle">KNAPP</string>
-    <string name="stats_state_hard">SEHR KNAPP</string>
-    <string name="stats_device">Gerät: %1$s frei von %2$s (%3$d %%)</string>
-    <string name="stats_device_unknown">Gerät: Speicher nicht ermittelbar</string>
-    <string name="stats_device_low">· System meldet Speichermangel</string>
-    <string name="stats_freed_label">FREIGEGEBEN</string>
-    <string name="stats_freed_detail">%1$d Dateien · zuletzt %2$s</string>
-
-    <string name="main_headline">Bulk Compressor</string>
-    <string name="main_sub">Ein Ordner, alle Videos und Bilder. Komprimiert wird an Ort und Stelle: gleicher Dateiname, gleicher Ordner, gleiche Zeit – die Galerie bleibt in ihrer Reihenfolge.</string>
-
-    <string name="label_folder">ORDNER</string>
-    <string name="folder_none">Kein Ordner gewählt</string>
-    <string name="button_pick">Ordner wählen</string>
-    <string name="button_rescan">Neu scannen</string>
-    <string name="scan_scanning">Ordner wird gelesen …</string>
-    <string name="scan_empty">Keine Videos oder Bilder gefunden.</string>
-    <string name="scan_summary">%1$d Videos · %2$d Bilder · %3$s</string>
-    <string name="scan_truncated"> · Liste begrenzt</string>
-    <string name="scan_unreadable"> · %1$d Ordner nicht lesbar</string>
-    <string name="scan_tagged"> · %1$d bereits komprimiert</string>
-    <string name="scan_markers_unreadable"> · %1$d Marker nicht lesbar</string>
-    <string name="scan_marker_reason"> (%1$s)</string>
-    <string name="scan_failed">Ordner konnte nicht gelesen werden. Einzelheiten im Terminal.</string>
-
-    <string name="label_video">VIDEO</string>
-    <string name="label_mode">MODUS</string>
-    <string name="label_bitrate">BITRATE</string>
-    <string name="label_resolution">AUFLÖSUNG</string>
-    <string name="label_codec">CODEC</string>
-    <string name="label_images">BILDER</string>
-    <string name="label_quality">QUALITÄT</string>
-    <string name="label_format">FORMAT</string>
-    <string name="label_output">AUSGABE</string>
-    <string name="label_options">OPTIONEN</string>
-    <string name="label_status">STAND</string>
-
-    <string name="label_selection">AUSWAHL</string>
-    <string name="selection_count">%1$d von %2$d</string>
-    <string name="selection_all">ALLE</string>
-    <string name="selection_none">KEINE</string>
-
-    <string name="mode_bitrate">BITRATE</string>
-    <string name="mode_scale">AUFLÖSUNG</string>
-    <string name="mode_both">BEIDES</string>
-
-    <string name="res_original">ORIGINAL</string>
-    <string name="res_4k">4K</string>
-    <string name="res_1440">1440p</string>
-    <string name="res_1080">1080p</string>
-    <string name="res_720">720p</string>
-    <string name="res_480">480p</string>
-
-    <string name="codec_auto">AUTO</string>
-    <string name="codec_avc">H.264</string>
-    <string name="codec_hevc">H.265</string>
-
-    <string name="format_keep">BEHALTEN</string>
-    <string name="format_jpeg">JPEG</string>
-    <string name="format_webp">WEBP</string>
-
-    <string name="output_overwrite">ORIGINAL ERSETZEN</string>
-    <string name="output_keep">ORIGINAL BEHALTEN</string>
-    <string name="toggle_timestamps">Zeitstempel der Datei erhalten</string>
-    <string name="toggle_exif">EXIF-Daten übernehmen</string>
-    <string name="toggle_retag">Bereits komprimierte erneut bearbeiten</string>
-    <string name="toggle_sound">Klickgeräusche</string>
-    <string name="output_hint_overwrite">Die Datei wird an ihrem Platz ersetzt. Name, Ordner und Galerie-Eintrag bleiben, deshalb rutscht nichts in der Zeitleiste.</string>
-    <string name="output_hint_keep">Neben dem Original entsteht eine zweite Datei mit dem Zusatz „_compressed“. Originale bleiben unberührt.</string>
-
-    <string name="access_needed">Android kann den Änderungszeitstempel nur über den Dateipfad zurücksetzen. Ohne „Zugriff auf alle Dateien“ tragen komprimierte Dateien das Datum der Bearbeitung – im Galerie-Verlauf rutschen sie damit nach oben.</string>
-    <string name="access_grant">Zugriff auf alle Dateien freigeben</string>
-
-    <string name="button_start">Start</string>
-    <string name="button_starting">Startet ...</string>
-    <string name="button_stop">Stopp</string>
-    <string name="button_cancelling">Bricht ab ...</string>
-    <string name="button_no_selection">Keine Auswahl</string>
-    <string name="error_start_refused">Start kam nicht an - Details im Protokoll</string>
+    <string name="runstats_title">Statistik</string>
     <string name="action_cancel">Abbrechen</string>
-    <string name="progress_preparing">Vorbereitung …</string>
-
-    <!-- Statusanzeigen: welche Einstellung wirkt gerade -->
-    <string name="status_inactive">— INAKTIV</string>
-    <string name="status_no_selection">— NICHTS AUSGEWÄHLT</string>
-
-    <string name="label_active_config">AKTIVE KONFIGURATION</string>
-    <string name="config_video_bitrate">VIDEO\u0020\u0020\u0020\u0020Bitrate %1$d %% · Codec %2$s</string>
-    <string name="config_video_scale">VIDEO\u0020\u0020\u0020\u0020max. %1$s · Codec %2$s</string>
-    <string name="config_video_both">VIDEO\u0020\u0020\u0020\u0020%1$d %% Bitrate · max. %2$s · Codec %3$s</string>
-    <string name="config_video_off">VIDEO\u0020\u0020\u0020\u0020keine Videos in der Auswahl</string>
-    <string name="config_images">BILDER\u0020\u0020\u0020max. %1$s · Q%2$d · %3$s</string>
-    <string name="config_images_off">BILDER\u0020\u0020\u0020keine Bilder in der Auswahl</string>
-    <string name="config_output">AUSGABE\u0020\u0020%1$s</string>
-    <string name="config_options">OPTIONEN\u0020Zeitstempel %1$s · EXIF %2$s · Marker\u00A0%3$s</string>
-    <string name="value_unchanged">ORIGINAL</string>
-    <string name="value_on">AN</string>
-    <string name="value_off">AUS</string>
-    <string name="footer">● OFFLINE · KEIN NETZWERKZUGRIFF</string>
-
-    <string name="error_no_folder">Bitte zuerst einen Ordner wählen</string>
-    <string name="error_no_selection">Keine Dateien ausgewählt</string>
-    <string name="error_permission">Ordnerzugriff abgelaufen – bitte neu wählen</string>
-
     <string name="channel_name">Komprimierung</string>
     <string name="channel_description">Fortschritt beim Verkleinern mehrerer Dateien</string>
-
-    <!-- Statistikseite: eigene Ansicht, eigene Praefixe (runstats_), damit
-         sie nicht mit den Zahlen der Speichertafel kollidieren. -->
-    <string name="runstats_title">Statistik</string>
-    <string name="runstats_sub">Was die Läufe insgesamt gebracht haben. Gerechnet wird über alle Läufe, die je auf diesem Gerät fertig geworden sind.</string>
-    <string name="runstats_total_label">INSGESAMT GESPART</string>
-    <string name="runstats_runs_label">LÄUFE</string>
-    <string name="runstats_files_label">DATEIEN</string>
-    <string name="runstats_saved_files_label">KLEINER GEMACHT</string>
-    <string name="runstats_average_label">JE LAUF</string>
-    <string name="runstats_list_label">LÄUFE</string>
-    <string name="runstats_back">Zurück</string>
-    <string name="runstats_empty">Noch kein Lauf abgeschlossen. Sobald ein Lauf durch ist, steht hier, was er gebracht hat.</string>
-    <string name="runstats_footer">Eine Zeile je Lauf, die letzten %1$d. Ältere fallen aus der Liste, zählen aber in der Summe weiter – die Datei bleibt dadurch klein.</string>
-    <string name="runstats_run_files">%1$d von %2$d Dateien kleiner</string>
-    <string name="runstats_run_saved">−%1$s</string>
-    <string name="runstats_run_nothing_saved">nichts gespart</string>
-    <string name="button_stats">Statistik</string>
-    <string name="total_saved">Insgesamt gespart: %1$s in %2$d Läufen</string>
 </resources>

@@ -32,8 +32,29 @@ object JobBus {
         val overall: Float = 0f,
         val beforeBytes: Long = 0,
         val afterBytes: Long = 0,
+        /**
+         * Zuletzt fertig gewordene Datei und ihre Groesse danach.
+         *
+         * Die Oberflaeche baut daraus die Vorher/Nachher-Spalte der Liste:
+         * eine ganze Ergebnisliste im Zustand waere bei zehntausend Dateien
+         * bei jeder Meldung eine Kopie derselben.
+         */
+        val lastDocId: String = "",
+        val lastAfterBytes: Long = 0,
+        /** Startzeit des Laufs; 0 heisst: in diesem Prozess noch keiner. */
+        val startedAt: Long = 0,
+        /** Endzeit, sobald der Lauf abgeschlossen oder abgebrochen ist. */
+        val endedAt: Long = 0,
         val log: List<String> = emptyList()
     ) {
+        /** Laufzeit bis jetzt - der Wert steht nach dem Ende still. */
+        val elapsedMs: Long
+            get() = when {
+                startedAt <= 0 -> 0
+                endedAt > 0 -> endedAt - startedAt
+                else -> System.currentTimeMillis() - startedAt
+            }
+
         val savedBytes: Long get() = (beforeBytes - afterBytes).coerceAtLeast(0)
         val savedPercent: Int
             get() = if (beforeBytes <= 0) 0

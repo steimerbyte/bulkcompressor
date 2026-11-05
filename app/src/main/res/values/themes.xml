@@ -1,40 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources xmlns:tools="http://schemas.android.com/tools">
+<resources>
 
-    <style name="Theme.BulkCompressor" parent="Theme.AppCompat.DayNight.NoActionBar">
+    <!--
+        Nur noch das Fenster: alles Sichtbare zeichnet Compose
+        (ui/Nothing.kt, Tokens aus dem Layoutsystem). Kein AppCompat mehr.
+    -->
+    <style name="Theme.BulkCompressor" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/nothing_black</item>
-        <item name="android:colorBackground">@color/nothing_black</item>
-        <item name="android:textColorPrimary">@color/nothing_white</item>
-        <item name="android:textColorSecondary">@color/nothing_grey</item>
-        <item name="colorAccent">@color/nothing_accent</item>
-        <item name="colorPrimary">@color/nothing_accent</item>
         <item name="android:statusBarColor">@color/nothing_black</item>
         <item name="android:navigationBarColor">@color/nothing_black</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:textColorHint">@color/nothing_dim</item>
-    </style>
-
-
-    <style name="SectionLabel">
-        <item name="android:textSize">10sp</item>
-        <item name="android:fontFamily">monospace</item>
-        <item name="android:letterSpacing">0.2</item>
-        <item name="android:textColor">@color/nothing_dim</item>
-    </style>
-
-    <!-- Rechts neben einer Abschnittsueberschrift: zeigt, ob der
-         Abschnitt mit der aktuellen Auswahl ueberhaupt wirkt. -->
-    <style name="StatusLabel">
-        <item name="android:textSize">9sp</item>
-        <item name="android:fontFamily">monospace</item>
-        <item name="android:letterSpacing">0.16</item>
-        <item name="android:textColor">@color/nothing_dim</item>
-    </style>
-
-    <style name="ValueLabel">
-        <item name="android:textSize">10sp</item>
-        <item name="android:fontFamily">monospace</item>
-        <item name="android:letterSpacing">0.1</item>
-        <item name="android:textColor">@color/nothing_white</item>
     </style>
 </resources>

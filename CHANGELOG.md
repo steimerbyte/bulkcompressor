@@ -4,6 +4,74 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionierung
 nach [SemVer](https://semver.org/lang/de/).
 
+## [1.10.0] – 2026-11-05
+
+### Geändert
+
+- **Die Oberfläche läuft im NothingOS-Layoutsystem.** Der bisherige
+  XML-Bildschirm (1290 Zeilen, eigene Views für Chips, Regler, Punktmatrix,
+  Stand-Tafel und Terminal) ist durch Compose ersetzt: Kicker und Titel,
+  Live-Panel mit CPU und RAM als Histogramme, Kennzahlen-Panel (Dateien,
+  eingesparte Bytes, Dauer), Fortschrittsbalken in der festen unteren
+  Leiste, Liste mit Vorher- → Nachher-Größe und Ersparnis je Datei,
+  About mit dem Leitspruch `Function over form.` allein in Akzentfarbe.
+  Die Bausteine liegen in `ui/Nothing.kt`, der Bildschirmzustand in
+  `ui/HomeState.kt`; eine zweite Stelle mit Farben oder Schriftgrößen gibt
+  es nicht mehr.
+- **Preset eingeklappt.** Video, Bilder, Ausgabe und Optionen stehen
+  hinter einer Zeile, die die aktuelle Wahl zusammenfasst, und öffnen sich
+  mit einem Tipp. Vorher nahmen sie mehr Höhe ein als der Bildschirm.
+- **Querformat.** Live-Panel und Kennzahlen stehen nebeneinander, der
+  Fußsatz entfällt — vorher blieb unter den Panels kein Platz für die
+  Liste.
+- **Protokoll als Overlay** hinter dem Knopf `LOG`, mit Kopieren, Teilen,
+  Leeren. Es nimmt der Liste keinen Platz mehr weg.
+- **Statistikseite** ebenfalls auf Compose umgebaut, gleiche Bausteine,
+  gleiche Reihenfolge (Summen, Balken relativ zum größten Lauf).
+- **CPU-Zeile zeigt den eigenen Prozess.** `/proc/stat` ist für Apps auf
+  Android 17 gesperrt (am Gerät gemessen); `/proc/self/stat` ist lesbar.
+  Die Zeile heißt deshalb `CPU · PROZESS` — die Kompression läuft in
+  diesem Prozess, der Wert ist damit der richtige für „was kostet der
+  Lauf".
+- **Zustand in `rememberSaveable`:** Ordner, Auswahl, Filter, Suche und
+  die aufgeklappte Preset-Zeile überleben Drehung und Prozessende; ein
+  neuer Scan behält die Auswahl der noch vorhandenen Dateien, statt still
+  wieder alles anzuhaken.
+
+### Behoben
+
+- **Jede Bilddatei wurde nach dem Schreiben als Fehler verworfen und das
+  Original zurückgeschrieben.** Der Kompressionsmarker wird nach dem
+  Messen der Ergebnisgröße in die Temp-Datei geschrieben und macht sie um
+  seine eigene Länge größer (bei JPEG 69 B); die Rückfallebene verglich
+  danach die geschriebenen Bytes mit der Größe **vor** dem Marker und
+  brach jedes Ersetzen als „falsche Größe" ab. Am Gerät mit fünf Bildern
+  reproduziert (5 von 5 Fehlern, 0 B gespart). Die erwartete Größe wird
+  jetzt nach dem Marker gelesen.
+- **Die untere Leiste nennt einen gescheiterten Lauf nicht mehr
+  `FERTIG`:** Sind alle Dateien fehlgeschlagen, steht dort
+  `FEHLGESCHLAGEN`, und das Ergebnis-Overlay sagt dasselbe.
+- **Späte Scan-Meldungen** nach dem Ende oder nach einem abgelösten Scan
+  werden verworfen; die Live-Zeile blieb sonst nach dem Scan stehen.
+
+### Entfernt
+
+- `ScanBeacon`, `NothingSlider`, `ChipRow`, `SegmentBar`, `StatsBoard`,
+  `TerminalPanel`, `WrappingRowLayout`, `MediaAdapter` und die zugehörigen
+  XML-Layouts; `AppCompatActivity`, `appcompat` und `recyclerview` als
+  Abhängigkeiten. Vier Fünftel der Strings in `strings.xml` waren nur noch
+  für die gelöschten Ansichten da und sind mitgegangen.
+
+### Tests
+
+- **288 JVM-Tests.** Die alten View-Tests (fehlende View-IDs,
+  Sichtbarkeit, Platzhalter) prüfen jetzt den Bildschirmzustand
+  (`HomeState`) und die Startbeschriftung; der Scan-Test über den
+  Testanbieter treibt die Fortschrittszeile Schritt für Schritt.
+  Neu: Auswahl bleibt beim Neuladen erhalten, Suche und Filter ändern die
+  Auswahl nicht, Einstellungen werden gespeichert, gescheiterte Läufe
+  tragen die richtige Beschriftung.
+
 ## [1.9.6] – 2026-11-01
 
 ### Behoben

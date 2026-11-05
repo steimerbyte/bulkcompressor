@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 // Credentials aus keystore.properties im Projekt-Root.
@@ -23,8 +24,8 @@ android {
         // braucht nicht mehr als MediaCodec + MediaMuxer (API 18+).
         minSdk = 24
         targetSdk = 35
-        versionCode = 26
-        versionName = "1.9.6"
+        versionCode = 27
+        versionName = "1.10.0"
     }
 
     signingConfigs {
@@ -44,6 +45,7 @@ android {
         // Der Marker schreibt die App-Version in die Metadaten der Datei -
         // dafuer braucht es BuildConfig, das AGP nicht mehr von allein baut.
         buildConfig = true
+        compose = true
     }
 
     buildTypes {
@@ -72,10 +74,12 @@ android {
 }
 
 dependencies {
-    implementation("androidx.appcompat:appcompat:1.7.0")
-    // Dateiliste: nur sichtbare Zeilen werden gehalten, wichtig auf
-    // Geraeten mit wenig RAM.
-    implementation("androidx.recyclerview:recyclerview:1.3.2")
+    // Oberflaeche: Compose mit dem NothingOS-Layoutsystem (ui/Nothing.kt).
+    implementation(platform("androidx.compose:compose-bom:2024.10.01"))
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.activity:activity-compose:1.9.3")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     // EXIF lesen und zurueckschreiben, damit die Chronologie der Galerie
     // erhalten bleibt (Aufnahmedatum, GPS, Geraet).
     implementation("androidx.exifinterface:exifinterface:1.3.7")

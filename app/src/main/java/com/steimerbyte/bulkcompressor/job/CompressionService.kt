@@ -235,7 +235,13 @@ class CompressionService : Service(), JobBus.Listener {
                     )
                     JobBus.appendLog("NICHT FERTIG: $text")
                     JobBus.publish(
-                        JobBus.state.copy(running = false, finished = true, total = 0, done = 0)
+                        JobBus.state.copy(
+                            running = false,
+                            finished = true,
+                            total = 0,
+                            done = 0,
+                            endedAt = System.currentTimeMillis()
+                        )
                     )
                     return@Thread
                 }
@@ -261,7 +267,12 @@ class CompressionService : Service(), JobBus.Listener {
                 // schreibt denselben Lauf kein zweites Mal.
                 recordRun(treeUri)
                 JobBus.publish(
-                    JobBus.state.copy(running = false, finished = true, overall = 0f)
+                    JobBus.state.copy(
+                        running = false,
+                        finished = true,
+                        overall = 0f,
+                        endedAt = System.currentTimeMillis()
+                    )
                 )
             } finally {
                 // Bewusst vor finishForeground: das veroeffentlicht den
@@ -463,7 +474,13 @@ class CompressionService : Service(), JobBus.Listener {
         val text = "Start nicht moeglich: ${error?.javaClass?.simpleName ?: "unbekannt"}"
         Log.e("Service", "$text · ${error?.message}", error)
         JobBus.appendLog("FEHLER: $text")
-        JobBus.publish(JobBus.state.copy(running = false, finished = true))
+        JobBus.publish(
+            JobBus.state.copy(
+                running = false,
+                finished = true,
+                endedAt = System.currentTimeMillis()
+            )
+        )
         runCatching {
             getSystemService(NotificationManager::class.java)
                 .notify(NOTIFICATION_ID, buildNotification(text, null, 0, false))

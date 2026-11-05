@@ -168,6 +168,7 @@ class CompressionJob(
             JobBus.State(
                 running = true,
                 total = work.size,
+                startedAt = runStartedAt,
                 log = buildList {
                     add("Start: ${work.size} Dateien")
                     add("Ziel: ${describeSettings()}")
@@ -193,7 +194,8 @@ class CompressionJob(
                     total = 0,
                     done = 0,
                     overall = 1f,
-                    currentName = ""
+                    currentName = "",
+                    endedAt = System.currentTimeMillis()
                 )
             )
             return
@@ -220,6 +222,9 @@ class CompressionJob(
                 // Uebersprungene Dateien zaehlen fuer den Balken mit,
                 // vorher blieb er stehen und sah nach Haenger aus.
                 publish(index + 1, item.displayName, 0f)
+                // Die Zeile der Liste bleibt bei ihrer Groesse: uebersprungen
+                // heisst unveraendert.
+                publishFile(item, item.sizeBytes)
                 continue
             }
             // Der Marker der Quelle wandert in den neuen Marker: `runs`
@@ -277,7 +282,12 @@ class CompressionJob(
 
             done = resumeBase + index + 1
             processedBytes += item.sizeBytes
+            publishFile(item, if (result == RunJournal.Result.OK) savedAfter else item.sizeBytes)
             if (done % CHECKPOINT_EVERY == 0 && done < work.size) checkpoint("Zwischenstand")
+            // Eine Datei nach der anderen, mit einer Atempause dazwischen:
+            // der Haupt-Thread soll zeichnen koennen, nicht in der Schlange
+            // hinter dem naechsten Bild warten.
+            Thread.yield()
         }
 
         val cancelledNow = cancelled.get()
@@ -293,6 +303,7 @@ class CompressionJob(
                 overall = if (cancelledNow) JobBus.state.overall else 1f,
                 beforeBytes = beforeBytes,
                 afterBytes = afterBytes,
+                endedAt = System.currentTimeMillis(),
                 currentName = ""
             )
         )
@@ -837,7 +848,7 @@ class CompressionJob(
         inPlaceSafe: Boolean,
         details: String
     ) {
-        val after = temp.length()
+        var after = temp.length()
         if (after <= 0) {
             failed++
             logLine("FEHLER ${item.displayName}: leere Ausgabedatei")
@@ -886,6 +897,11 @@ class CompressionJob(
             )
             return
         }
+        // Der Marker steht jetzt in der Datei und macht sie um seine eigene
+        // Groesse groesser. Ab hier zaehlt die tatsaechliche Groesse - sonst
+        // vergleicht SafeReplace sie mit dem Stand davor und bricht jedes
+        // Schreiben als "falsche Groesse" ab, obwohl es gestimmt haette.
+        after = temp.length()
         val report = Verifier.verifyFile(temp, mime, expectTag = true)
         if (!report.passed) {
             failed++
@@ -1163,6 +1179,26 @@ class CompressionJob(
                 overall = overall.coerceIn(0f, 1f),
                 beforeBytes = beforeBytes,
                 afterBytes = afterBytes
+            )
+        )
+    }
+
+    /**
+     * Ergebnis einer Datei an die Oberflaeche: eine Zeile in der Liste
+     * bekommt ihre Nachher-Groesse, ohne dass fuer jede Datei die ganze
+     * Ergebnistabelle kopiert wird.
+     */
+    private fun publishFile(item: MediaItem, afterSize: Long) {
+        JobBus.publish(
+            JobBus.state.copy(
+                done = done,
+                failed = failed,
+                skipped = skipped,
+                unreadable = unreadable,
+                beforeBytes = beforeBytes,
+                afterBytes = afterBytes,
+                lastDocId = item.docId,
+                lastAfterBytes = afterSize
             )
         )
     }

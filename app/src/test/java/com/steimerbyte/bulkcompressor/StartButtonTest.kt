@@ -3,12 +3,12 @@ package com.steimerbyte.bulkcompressor
 import android.app.Application
 import android.net.Uri
 import android.os.Looper
-import android.widget.Button
 import com.steimerbyte.bulkcompressor.job.CompressionService
 import com.steimerbyte.bulkcompressor.job.JobBus
 import com.steimerbyte.bulkcompressor.model.MediaItem
 import com.steimerbyte.bulkcompressor.model.MediaKind
 import com.steimerbyte.bulkcompressor.model.ScanResult
+import com.steimerbyte.bulkcompressor.ui.runStatusLabel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -28,6 +28,10 @@ import org.robolectric.annotation.Config
  * die Beschriftung folgt dem Zustand (nicht dem letzten Klick), und der
  * Knopf ist nach einem Lauf wieder bedienbar - auch wenn dessen Endmeldung
  * eintraf, waehrend die App im Hintergrund war.
+ *
+ * Geprueft wird der Zustand, aus dem die Compose-Schaltflaeche ihre
+ * Beschriftung und Bedienbarkeit ableitet - dieselbe Funktion, die sie
+ * zeichnet.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29])
@@ -57,9 +61,7 @@ class StartButtonTest {
     )
 
     private fun scan(vararg items: MediaItem) =
-        ScanResult(items.toList(), folderCount = 1, truncated = false)
-
-    private fun button(activity: MainActivity): Button = activity.findViewById(R.id.button_start)
+        ScanResult(items = items.toList(), folderCount = 1, truncated = false)
 
     private fun startedService() =
         shadowOf(RuntimeEnvironment.getApplication() as Application).nextStartedService
@@ -69,10 +71,8 @@ class StartButtonTest {
         val activity = controller().get()
         idle()
 
-        val start = button(activity)
-
-        assertFalse("Ohne Auswahl darf der Knopf nicht bedienbar sein", start.isEnabled)
-        assertEquals("Keine Auswahl", start.text.toString())
+        assertFalse("Ohne Auswahl darf der Knopf nicht bedienbar sein", activity.startEnabled())
+        assertEquals("Keine Auswahl", activity.startLabel())
     }
 
     @Test
@@ -81,10 +81,8 @@ class StartButtonTest {
         activity.applyScanForTest(tree, scan(item("a.jpg", MediaKind.IMAGE)))
         idle()
 
-        val start = button(activity)
-
-        assertTrue("Mit Auswahl muss der Knopf bedienbar sein", start.isEnabled)
-        assertEquals("Start", start.text.toString())
+        assertEquals("Start", activity.startLabel())
+        assertTrue(activity.startEnabled())
     }
 
     @Test
@@ -94,21 +92,20 @@ class StartButtonTest {
         JobBus.publish(JobBus.State(running = true, total = 4, done = 1, currentName = "a.mp4"))
         idle()
 
-        val start = button(activity)
-        assertEquals("Stopp", start.text.toString())
-        assertTrue(start.isEnabled)
+        assertEquals("Stopp", activity.startLabel())
+        assertTrue(activity.startEnabled())
 
-        start.performClick()
+        activity.onStartControl()
         idle()
 
-        assertEquals("Bricht ab ...", start.text.toString())
+        assertEquals("Bricht ab …", activity.startLabel())
         val intent = startedService()
         assertNotNull("Der Klick auf Stopp muss den Abbruch ausloesen", intent)
         assertEquals(CompressionService.ACTION_CANCEL, intent?.action)
     }
 
     @Test
-    fun `nach einem abgeschlossenen lauf ist der knopf fuer einen neuen ordner bedienbar`() {
+    fun `nach einem abgeschlossenen lauf ist der knopf fuer einen neuen lauf bedienbar`() {
         val activity = controller().get()
         // Lauf 1 laeuft und endet mit Erfolg.
         activity.applyScanForTest(tree, scan(item("a.mp4", MediaKind.VIDEO)))
@@ -132,14 +129,10 @@ class StartButtonTest {
         )
         idle()
 
-        val start = button(activity)
-        assertTrue(
-            "Nach einem fertigen Lauf muss der Knopf wieder bedienbar sein",
-            start.isEnabled
-        )
-        assertEquals("Start", start.text.toString())
+        assertEquals("Start", activity.startLabel())
+        assertTrue("Nach einem fertigen Lauf muss der Knopf wieder bedienbar sein", activity.startEnabled())
 
-        start.performClick()
+        activity.onStartControl()
         idle()
 
         val intent = startedService()
@@ -157,20 +150,31 @@ class StartButtonTest {
         activity.applyScanForTest(tree, scan(item("a.mp4", MediaKind.VIDEO)))
         idle()
 
-        val start = button(activity)
-        start.performClick()
+        activity.onStartControl()
         idle()
 
         // Der Dienst hat noch nicht geantwortet: der Knopf sagt das, statt
         // wie frueher still "Start" anzuzeigen und nicht mehr zu reagieren.
-        assertEquals("Startet ...", start.text.toString())
-        assertFalse(start.isEnabled)
+        assertEquals("Startet …", activity.startLabel())
+        assertFalse(activity.startEnabled())
 
         // Sobald der Dienst den Auftrag angenommen hat, wird gestoppt.
         JobBus.publish(JobBus.State(running = true, total = 1, done = 0))
         idle()
-        assertEquals("Stopp", start.text.toString())
-        assertTrue(start.isEnabled)
+        assertEquals("Stopp", activity.startLabel())
+        assertTrue(activity.startEnabled())
+    }
+
+    @Test
+    fun `die leiste nennt einen gescheiterten lauf nicht fertig`() {
+        assertEquals("FERTIG · 5 / 5", runStatusLabel(false, false, 5, 5, 0))
+        assertEquals(
+            "Ein Lauf, in dem jede Datei scheiterte, ist nicht fertig",
+            "FEHLGESCHLAGEN · 5 / 5",
+            runStatusLabel(false, false, 5, 5, 5)
+        )
+        assertEquals("ABGEBROCHEN · 3 / 5", runStatusLabel(false, true, 3, 5, 0))
+        assertEquals("LÄUFT · 3 / 5", runStatusLabel(true, false, 3, 5, 0))
     }
 
     @Test
@@ -180,7 +184,7 @@ class StartButtonTest {
         activity.applyScanForTest(tree, scan(item("a.mp4", MediaKind.VIDEO)))
         JobBus.publish(JobBus.State(running = true, total = 1, done = 0))
         idle()
-        assertFalse("Waehrend des Laufs ist Start gesperrt", button(activity).text == "Start")
+        assertTrue("Waehrend des Laufs ist Start gesperrt", activity.startLabel() == "Stopp")
 
         // Die App ist im Hintergrund, als der Lauf endet - die Endmeldung
         // erreicht die Oberflaeche nicht.
@@ -189,12 +193,8 @@ class StartButtonTest {
         lifecycle.start().resume()
         idle()
 
-        val start = button(activity)
-        assertTrue(
-            "Nach der Rueckkehr muss der Knopf den Zustand kennen, nicht den alten Klick",
-            start.isEnabled
-        )
-        assertEquals("Start", start.text.toString())
+        assertEquals("Start", activity.startLabel())
+        assertTrue(activity.startEnabled())
         assertNull("Kein Auftrag ohne Klick", startedService())
     }
 }

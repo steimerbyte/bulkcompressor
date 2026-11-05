@@ -23,18 +23,19 @@ Kein Konto. Kein Netzwerk. Keine Analytics. Kein `INTERNET`-Recht.
 
 ## Screenshots
 
-| Übersicht | Optionen und Stand | Terminal |
-|---|---|---|
-| <img src="docs/screenshots/01-uebersicht.png" width="280"> | <img src="docs/screenshots/02-optionen.png" width="280"> | <img src="docs/screenshots/03-terminal.png" width="280"> |
-| Ordner mit laufender Scan-Zeile, Video- und Bildpresets | Ausgabe, Optionen, Speicherstand, aktive Konfiguration | Protokoll aufgeklappt, mit Kopieren/Teilen/Leeren |
+| Übersicht | Lauf | About | Querformat |
+|---|---|---|---|
+| <img src="docs/screenshots/01-uebersicht.png" width="240"> | <img src="docs/screenshots/02-lauf.png" width="240"> | <img src="docs/screenshots/03-about.png" width="240"> | <img src="docs/screenshots/04-querformat.png" width="240"> |
+| Kennzahlen, Live-Panel, Ordner, Suche, Filter, Preset-Zeile, Liste | Lauf bei 1 von 5 Dateien: Fortschritt, Tempo, Vorher → Nachher je Datei | Kicker antippen: Name, Version, Leitspruch, Kernkommandos | Dieselben Panels nebeneinander, Startknopf unten |
 
-Aufgenommen mit **1.9.4**. Der Knopf **Statistik** unter der Stand-Tafel
-kam mit 1.9.5 — er fehlt auf diesen Bildern noch.
+Aufgenommen mit **1.10.0** auf einem Nothing Phone (3a) Pro (Android 17),
+Testbilder aus `Download/bctest`.
 
 ---
 
 ## Inhalt
 
+- [Layoutsystem](#layoutsystem)
 - [Was die App tut](#was-die-app-tut)
 - [Ordner und Scan](#ordner-und-scan)
 - [Auswahl](#auswahl)
@@ -60,6 +61,57 @@ kam mit 1.9.5 — er fehlt auf diesen Bildern noch.
 
 ---
 
+## Layoutsystem
+
+Die Oberfläche folgt dem NothingOS-Layoutsystem der Familie
+(`~/.omp/agent/managed-skills/nothingos-app/SKILL.md`). Alle Bausteine
+liegen in **`ui/Nothing.kt`** (Tokens, Typografie, `Osw`,
+`SummaryPanel`, `LivePanel`, `Bar`, `Pill`, `MiniButton`, `WideButton`,
+`SearchField`, `Toggle`, `AboutPanel`), der Bildschirmzustand in
+**`ui/HomeState.kt`**. Eine zweite Stelle mit Farben oder Schriftgrößen
+gibt es nicht; wer die Tokens ändert, ändert sie dort.
+
+Aufbau von oben nach unten, in der Reihenfolge des Skills:
+
+| Slot | Inhalt |
+|---|---|
+| 1 `Osw` | Kicker `NOTHING OS · BILD-KOMPRESSION` (tippen öffnet About), Titel, `LOG` |
+| 2 `LivePanel` | CPU des eigenen Prozesses und Geräte-RAM, je 48 Werte |
+| 3 `SummaryPanel` | Dateien, eingesparte Bytes, Dauer |
+| 4 Steuerfläche | Scanstand, Ordnerwahl/Neu scannen/Statistik, Suche, Filter, Preset (aufklappbar), Auswahl, Liste |
+| 5 Liste | je Datei Marke, Name, Art und Zeit, Vorher- → Nachher-Größe, Ersparnis-Chip |
+| 6 Aktionsleiste | Fortschritt `LÄUFT · 34 / 210`, Balken, laufende Datei, ein Knopf (Start/Stopp) |
+| 7 Overlays | About, Protokoll, Ergebnis |
+
+**Zustand in `rememberSaveable`:** Ordner, Auswahl, Filter, Suche und die
+aufgeklappte Preset-Zeile überleben Drehung und Prozessende
+(`HomeState.saver`). Das Preset selbst liegt in den Preferences, weil der
+Dienst es ohne Activity lesen muss.
+
+**Abweichungen vom Skill — und warum:**
+
+* **CPU statt Systemlast.** `/proc/stat` ist für Apps auf Android 17
+  gesperrt (`Permission denied`, am Gerät gemessen). Das Panel zeigt
+  deshalb die CPU-Zeit des eigenen Prozesses aus `/proc/self/stat` und
+  beschriftet die Zeile `CPU · PROZESS` — die Kompression läuft in
+  diesem Prozess, der Wert ist damit der richtige für die Frage „was
+  kostet der Lauf". Ein Systemwert bräuchte Shizuku oder Root.
+* **Preset eingeklappt.** Der Skill sieht die Steuerfläche sichtbar vor.
+  Die vier Preset-Gruppen (Video, Bilder, Ausgabe, Optionen) sind
+  zusammen höher als der Bildschirm und hätten die Liste verdrängt; sie
+  stehen hinter einer Zeile, die die aktuelle Wahl zusammenfasst, mit
+  einem Tipp offen.
+* **Abhängige Regler statt „INAKTIV"-Chips.** Ist der Videomodus
+  `BITRATE`, wird die Auflösungsreihe nicht gezeigt (und umgekehrt). Der
+  Skill verlangt sichtbar zurücktretende Chips; hier verschwindet die
+  Zeile ganz, weil sie in diesem Modus nichts tut.
+* **Zwei Kennzahlen je Zeile** im `SummaryPanel`: vier Werte
+  nebeneinander lassen 22 sp nicht lesen. Das Panel ordnet deshalb zwei
+  Spalten pro Zeile.
+* **Startbildschirm-Fußzeile entfällt**: „JEDE DATEI EINZELN · ABBRUCH
+  JEDERZEIT · KEIN NETZ" steht als `Hint` über dem Startknopf, im
+  Querformat nicht (dort ist jede Zeile Höhe wert).
+
 ## Was die App tut
 
 1. **Ordner wählen** über den Android-Systemdialog (Storage Access
@@ -67,7 +119,8 @@ kam mit 1.9.5 — er fehlt auf diesen Bildern noch.
    Ordner und liest rekursiv Videos und Bilder heraus.
 2. **Presets einstellen** (siehe [Video](#video) und [Bilder](#bilder)).
 3. **Auswählen**, was bearbeitet wird — alles oder einzelne Dateien.
-4. **Start.** Der Knopf ganz unten ist Start und Stopp in einem;
+4. **Start.** Der eine Knopf in der unteren Leiste ist Start und Stopp
+   in einem;
    alles Weitere läuft als Vordergrunddienst mit
    Fortschrittsbenachrichtigung, auch bei gesperrtem Bildschirm — über
    Stunden, mit Speicherbremse und ohne Verlust des Fortschritts (siehe
@@ -104,10 +157,8 @@ Der Pfad wird lesbar angezeigt („Intern / DCIM"), nicht als
 
 Während des Scans:
 
-- **Punktmatrix neben `ORDNER`** (`ScanBeacon`) läuft, solange gelesen
-  wird; im Ruhezustand zeichnet sie nichts, behält aber ihren Platz, damit
-  nichts springt. Ist im System „Animationen entfernen" gewählt, steht das
-  Muster still.
+- **Die Zählerzeile** nennt die gefundenen Ordner und Dateien; solange
+  noch kein Ordner fertig ist, steht dort „LÄDT ORDNER …".
 - **Die Live-Zeile** unter der Zählerzeile läuft mit und nennt in jedem
   Durchgang, was gerade passiert: „517 Dateien · liest · Camera/IMG_0421.jpg",
   dann „517 Dateien · prüft 213/517 · Camera/IMG_0421.jpg" — die
@@ -134,9 +185,14 @@ Ordner ohne Verzeichnis-Typ erkennt der Scan am Kind-Abruf (siehe
 
 ## Auswahl
 
-Jede gefundene Datei steht als Zeile mit Name und Kurzinfo, davor ein
-Griff `■`. Getippt wird umgeschaltet; **ALLE** und **KEINE** setzen die
-ganze Liste. Über der Liste steht „N von M".
+Jede gefundene Datei steht als Zeile mit Name, Art, Zeitpunkt und
+Größe, davor ein Griff `■`. Getippt wird umgeschaltet; **ALLE** und
+**KEINE** setzen die ganze Liste, über der Liste steht „AUSWAHL N / M".
+
+Über Liste und Auswahl liegen **Suchfeld** und **Filter-Pills** (ALLE,
+BILDER, VIDEOS). Sie ändern nur, was zu sehen ist — die Auswahl bleibt
+davon unberührt, sonst würde ein Suchwort beim Start stillschweigend
+Dateien aus dem Lauf nehmen.
 
 Nach einem Scan ist **alles ausgewählt** — der Normalfall ist „diesen
 Ordner verkleinern", nicht „diese drei Bilder".
@@ -156,9 +212,8 @@ unveränderter Auflösung, Ausgabe „Original ersetzen". Alles danach wird
 gemerkt und beim nächsten Start wiedergefunden.
 
 **Bitrate:** 5–100 % der Quellbitrate, in 1-%-Schritten (Vorgabe 60 %).
-Der Regler ist eine Schiene mit Punktskala: Schiene = Strecke, Punkte =
-Wert, Knopf = Stellung. Die Prozentzahl steht in der Zeile **über** dem
-Regler, nicht auf dem Knopf — sie wird von ihm nie verdeckt.
+Der Regler ist eine feine Schiene mit eckigem Knopf in Akzentfarbe; die
+Prozentzahl steht in der Zeile **über** dem Regler, nicht auf dem Knopf.
 
 **Auflösung**, bezogen auf die *kurze* Kante — damit Hochformat nicht als
 Querformat behandelt wird:
@@ -181,9 +236,9 @@ gleicher Bitrate besser, aber nicht jedes Gerät kann es; fehlt der
 Encoder, fällt die App auf H.264 zurück und schreibt das ins Protokoll
 (`H.264 (Encoder-Limit)`).
 
-Ein Abschnitt, der nicht wirkt, sagt das einmal: „AUFLÖSUNG — INAKTIV",
-wenn der Modus nur die Bitrate senkt, und die Chips treten sichtbar
-zurück, statt so auszusehen, als könnte man sie antippen.
+Ein Abschnitt, der nicht wirkt, wird nicht gezeigt: Senkt der Modus nur
+die Bitrate, fehlt die Auflösungsreihe (und umgekehrt). Ein Chip, der
+nichts tut, ist eine Einladung ins Leere.
 
 ## Bilder
 
@@ -234,9 +289,12 @@ Folge nicht in der Bedienungsanleitung.
 
 ## Start, Dienst, Benachrichtigung
 
-Der **Startknopf sitzt fest am unteren Rand** und wird von der Seite nicht
-weggescrollt — bei einem Ordner mit hunderten Dateien ist er sonst erst
-nach langem Wischen zu erreichen. Er ist Start und Stopp in einem:
+Die **Aktionsleiste sitzt fest am unteren Rand** und wird von der Seite
+nicht weggescrollt — bei einem Ordner mit hunderten Dateien ist der Knopf
+sonst erst nach langem Wischen zu erreichen. Während eines Laufs steht
+darüber `LÄUFT · 34 / 210`, der Balken und die laufende Datei; nach dem
+Ende `FERTIG` (oder `FEHLGESCHLAGEN`, wenn keine Datei durchkam). Der
+Knopf ist Start und Stopp in einem:
 
 - Ohne Auswahl trägt er eine schwache Kante statt der weißen Fläche und
   heißt „Keine Auswahl" — ein weißer Knopf, der nicht reagiert, ist eine
@@ -266,20 +324,20 @@ alle zwei Sekunden neu gelesen, der eigene Heap bei jeder Meldung
 
 ## Terminal und Protokoll
 
-Das **Protokoll** liegt zwischen Inhalt und Startknopf; aufgeklappt schiebt
-es den Inhalt hoch, statt ihn zu verdecken. Zu hat es die Höhe einer
-40-dp-Leiste mit Zeilenzahl und Richtungspfeil.
+Das **Protokoll** liegt hinter dem Knopf `LOG` oben rechts und öffnet
+sich als Overlay über dem Bildschirm — es nimmt der Liste keinen Platz
+weg, wenn man es nicht braucht.
 
 Es hält die letzten **400 Zeilen** im Speicher und läuft mit, auch mitten
 im Lauf — beim Scannen mit einer Zeile je Ordner und einem Markerstand alle
 250 Dateien, damit bei einem großen Ordner nicht minutenlang Stille
-herrscht. Vier Knöpfe darunter:
+herrscht. Vier Knöpfe:
 
 | Griff | Wirkung |
 |---|---|
 | **KOPIEREN** | Zeilen in die Zwischenablage |
 | **TEILEN** | als Text an jede Ziel-App — inklusive Absturzbericht |
-| **LEER** | Anzeige leeren (die Datei im Download-Ordner bleibt) |
+| **LEEREN** | Anzeige leeren (die Datei im Download-Ordner bleibt) |
 | **SCHLIESSEN** | zuklappen |
 
 Jede Zeile trägt Zeit, Kürzel (`I`/`W`/`E`), Bereich und Text; mehrzeilige
@@ -290,12 +348,13 @@ identische Zeilen.
 
 ## Stand und Statistik
 
-Die **Stand-Tafel** zeigt den laufenden Zustand: App-Heap mit
-Segmentbalken (weiß → grau → rot) und Wort („FREI", „KNAPP", „SEHR
-KNAPP"), den freien Gerätespeicher und — nach einem erfolgreichen Lauf —
-den freigewordenen Platz („Insgesamt gespart: 4,50 GB in 4 Läufen").
+Das **Live-Panel** zeigt während des Laufs, was er kostet: die CPU-Zeit
+des eigenen Prozesses (Prozent eines Kerns, 48 Werte) und den belegten
+Geräte-RAM. Darunter steht das **SummaryPanel** mit Dateien
+(erledigt/gesamt), eingesparten Bytes und Dauer; unter dem Ordnerpfad die
+Summe aller Läufe („BISHER 4 LÄUFE · 204,8 MB GESPART").
 
-Direkt darunter sitzt der Knopf **Statistik**. Er öffnet eine eigene
+Der Knopf **Statistik** sitzt in der Ordnerreihe. Er öffnet eine eigene
 Seite, weil sie eine andere Frage beantwortet: nicht „was mache ich
 jetzt", sondern **„was hat es gebracht"**. Oben stehen die Summen über
 **alle** Läufe (gesparte Bytes, Läufe, Dateien, davon kleiner gemacht,
@@ -317,7 +376,8 @@ Ordner, Zeitpunkt und Ergebnis.
   bei wenigen Kilobyte bleibt.
 
 Der Einstieg saß bis 1.9.4 als nackte Ikone oben rechts im Kopf; seit
-1.9.5 steht er als beschrifteter Knopf dort, wo seine Zahlen schon stehen.
+1.9.5 ist er ein beschrifteter Knopf, seit 1.10.0 in der Ordnerreihe —
+dort, wo seine Zahlen schon stehen.
 
 ## Zeitstempel und Chronologie
 
@@ -448,7 +508,7 @@ Unterschied zwischen „läuft" und „hängt".
 |Thread|Was dort läuft|Warum nicht woanders|
 |---|---|---|
 |`main`|Ansichten, Layout, `NotificationManager.notify`, Rückrufe der Historie|Alles, was eine View anfasst, muss hier laufen.|
-|`ordner-scan`|`SafScanner.scan` (Ordner und Metadaten lesen)|Ein Ordner mit hunderten Dateien liest für Sekunden.|
+|`DefaultDispatcher-worker-*`|`SafScanner.scan` (Ordner und Metadaten lesen), als Coroutine der Composition|Ein Ordner mit hunderten Dateien liest für Sekunden; ein neuer Ordner bricht den alten Lauf ab (laufende Nummer, verspaetete Meldungen werden verworfen).|
 |`bulk-compress`|`CompressionJob.run`, dazu das Schreiben der Laufhistorie|Ein Lauf dauert Stunden; der Haupt-Thread ist nach 5 s blockiert.|
 |`log-writer`|private Logdatei und Logdatei im Download-Ordner|Protokollzeilen entstehen auch aus dem Lauf; Schreiben darf ihn nicht bremsen.|
 |`run-history`|Lesen der Statistikdatei|Die Zahl ist eine Datei — auch eine kleine wird nicht auf dem Haupt-Thread gelesen.|
@@ -469,10 +529,10 @@ Drei Grenzen, die daraus folgen:
   Historieeintrag passieren dort, damit kein Pfad einen Lauf ohne Eintrag
   hinterlässt.
 
-Auf dem Haupt-Thread bleibt bewusst nur wenig: `ActivityManager.getMemoryInfo`
-für die Speichertafel (ein Binder-Aufruf pro Sekunde) und das erste Laden
-der `SharedPreferences` beim Start — beides klein und ohne Datei-I/O im
-eigenen Code.
+Auf dem Haupt-Thread bleibt bewusst nur wenig: die Taktung der
+Histogramme (ein Lesezugriff auf `/proc` alle 700 ms, als Coroutine im
+Hintergrund) und das erste Laden der `SharedPreferences` beim Start —
+beides klein und ohne Datei-I/O im eigenen Code.
 
 ## Technik
 
@@ -500,10 +560,10 @@ eigenen Code.
   bei Video die Spur über den echten `MediaExtractor`.
 * **Kein `ffmpeg`:** die APK ist gut **3 MB** groß statt ~60 MB, und die
   Hardware-Encoder des Geräts sind ohnehin schneller als libx264.
-* **Bildsprache:** reines Schwarz, reines Weiß, ein Grau, ein Dim-Grau als
-  einziger Akzent; Mono-Schrift für Zahlen und Zustände; 8-dp-Raster,
-  12-dp-Ecken, 48-dp-Trefferflächen. Zwei eigene Views tragen das:
-  `ScanBeacon` (Punktmatrix) und `NothingSlider` (Schiene mit Punktskala).
+* **Bildsprache:** Compose mit dem NothingOS-Layoutsystem (siehe
+  [Layoutsystem](#layoutsystem)): reines Schwarz, reines Weiß, Grau und
+  Dim-Grau, Rot nur als Akzent; Mono-Schrift für Zahlen und Zustände;
+  2-dp-Ecken, 1-dp-Rahmen, 44-dp-Trefferflächen.
 * **Klang:** `SoundPool` mit fünf kurzen WAV-Dateien (4–16 KB) und zwei
   Schleifen-Dauertönen (je 172 KB), erzeugt von
   `tools/generate_click_sounds.py` — heller Klick für Chips, Liste und
@@ -531,8 +591,8 @@ eigenen Code.
 | `MANAGE_EXTERNAL_STORAGE` | **optional** — nur für das Zurücksetzen des Dateizeitstempels; die App läuft vollständig ohne |
 
 Kein `INTERNET`. Die App kann nichts nach außen senden, auch nicht
-wollen — im Fuß der Seite steht es als Zustand: „● OFFLINE · KEIN
-NETZWERKZUGRIFF".
+wollen — über dem Startknopf steht es als Zustand: „JEDE DATEI EINZELN ·
+ABBRUCH JEDERZEIT · KEIN NETZ".
 
 ## Logdatei
 
@@ -582,7 +642,7 @@ ausgeführt — siehe [Grenzen](#grenzen-ehrlich).
 ./gradlew :app:testDebugUnitTest
 ```
 
-**293 JVM-Tests**, alle ohne Gerät und ohne Emulator (der Host hat kein
+**288 JVM-Tests**, alle ohne Gerät und ohne Emulator (der Host hat kein
 `/dev/kvm`). `./tools/release.sh` fängt einen roten Lauf ab und verweigert
 die Marke, der `pre-push`-Haken tut dasselbe.
 
@@ -591,10 +651,10 @@ Kanten), Namensgebung und Kollisionsziffern, Marker schreiben und lesen in
 EXIF und MP4-Boxen, Zeitstempel-Auflösung samt Dateinamen-Mustern,
 Größenvergleich und `SKIP`-Regeln, Journal und Wiederaufnahme,
 Rückfallebene im Fehlerfall, Speicherwächter (reine Einordnung),
-Laufhistorie, die Oberfläche mit Robolectric (fehlende View-IDs,
-Sichtbarkeitsregeln, Platzhalter, Sortierung der Abschnitte, ein echter
-Scan über einen Testanbieter), Klick- und Dauertöne (Tonhöhe, Pegel,
-Schleife, Ducken), Manifest-Rechte.
+Laufhistorie, der Bildschirmzustand mit Robolectric (`HomeState`: Auswahl,
+Filter, Suche, Auswahl-Erhalt beim Neuladen, Startbeschriftung, gespeicherte
+Einstellungen, ein echter Scan über einen Testanbieter), die Statistikseite,
+Klick- und Dauertöne (Tonhöhe, Pegel, Schleife, Ducken), Manifest-Rechte.
 
 **Nicht abgedeckt:** alles, was echte Hardware braucht —
 `MediaCodec`-Pfade, Encoder-Verfügbarkeit, HDR-Material, das Verhalten
@@ -645,7 +705,7 @@ git config --local core.hooksPath .githooks
 
 Belegt: mit absichtlich rotem Test endet der Marken-Push mit Exit 1
 („Testsuite ist gescheitert — die Marke wird nicht gepusht"), mit grüner
-Suite mit Exit 0 („Suite grün: 293 Tests").
+Suite mit Exit 0 („Suite grün: 288 Tests").
 
 ## Grenzen (ehrlich)
 
